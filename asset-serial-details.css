@@ -1,0 +1,2005 @@
+@import url("https://fonts.googleapis.com/css2?family=Poppins:wght@400;600&display=swap");
+
+:root {
+  --bg: #FAFAFA;
+  /* Uniform grid sizing: one row height shared by every section grid and table */
+  --asd-cell-h: 42px;
+  /* Space permanently reserved for scrollbars (prevents layout shift on hover) */
+  --asd-scrollbar-size: 10px;
+  /* Key/value detail grids: exactly 5 rows + reserved horizontal scrollbar */
+  --asd-grid-max-h: calc(var(--asd-cell-h) * 5 + var(--asd-scrollbar-size));
+  /* Tables: sticky header + 5 body rows + reserved horizontal scrollbar */
+  --asd-table-max-h: calc(var(--asd-cell-h) * 6 + var(--asd-scrollbar-size) + 2px);
+}
+
+* {
+  box-sizing: border-box;
+  font-family: "Poppins", Arial, Helvetica, sans-serif;
+}
+
+html {
+  background: var(--bg);
+}
+
+html.qaf-preload .qaf-navdock,
+html.qaf-preload .asset-serial-page {
+  visibility: hidden;
+}
+
+body {
+  margin: 0;
+  background: #FAFAFA;
+  color: #1f2937;
+  font-weight: 400;
+  padding-left: 40px;
+  transition: padding-left 0.35s ease;
+}
+
+button,
+input,
+select,
+textarea {
+  font-weight: inherit;
+}
+
+#assetSerialDetailsAppHost {
+  min-height: 100vh;
+  background: var(--bg);
+  box-shadow: none;
+}
+
+:where(#assetSerialDetailsAppHost) .qaf-navdock .fa,
+:where(#assetSerialDetailsAppHost) .qaf-navdock .fa::before {
+  font-family: FontAwesome !important;
+}
+
+.qaf-navdock {
+  position: fixed;
+  left: 0;
+  top: 0;
+  height: 100vh;
+  width: 40px;
+  background: #FAFAFA;
+  border-right: 1px solid #9b97979e;
+  z-index: 10;
+  overflow: hidden;
+  padding-top: 84px;
+  transition: width 0.35s ease;
+}
+
+/* Wins over shared sheets (e.g. global.css) that set the dock background via .qaf-navdock. */
+#assetSerialDetailsAppHost .qaf-navdock,
+#assetSerialDetailsAppHost aside.qaf-navdock {
+  background: #FAFAFA;
+}
+
+.qaf-navdock:hover {
+  width: 250px;
+}
+
+body.qaf-navdock-expanded .qaf-navdock {
+  width: 250px;
+}
+
+body.qaf-navdock-expanded {
+  padding-left: 250px;
+}
+
+.qaf-navdock-layout-shift {
+  margin-left: 0;
+  transition: none;
+}
+
+.qaf-navdock__arrow-indicator {
+  position: absolute;
+  top: 51px;
+  right: 2px;
+  width: 36px;
+  height: 36px;
+  border: none;
+  background: transparent;
+  color: #111827;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.qaf-navdock__arrow-indicator i {
+  font-size: 26px !important;
+  transition: transform 240ms ease;
+}
+
+body.qaf-navdock-expanded .qaf-navdock__arrow-indicator i {
+  transform: rotate(180deg);
+}
+
+.qaf-navdock__list {
+  padding-top: 4px;
+}
+
+.qaf-navdock__item {
+  display: block;
+}
+
+.qaf-navdock__link {
+  width: 100%;
+  min-height: 38px;
+  border: none;
+  background: transparent;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 0 10px;
+  color: #111827;
+  text-decoration: none;
+}
+
+.qaf-navdock__link.is-active {
+  background: #eaf0ff;
+}
+
+.qaf-navdock__icon {
+  width: 20px;
+  min-width: 20px;
+  text-align: center;
+  font-size: 18px !important;
+  display: inline-block;
+}
+
+.qaf-navdock__label {
+  white-space: nowrap;
+  opacity: 0;
+  transform: translateX(-8px);
+  transition: opacity 180ms ease, transform 200ms ease;
+  font-size: 14px;
+  color: #05080f;
+}
+
+body.qaf-navdock-expanded .qaf-navdock__label,
+body:not(.qaf-navdock-expanded) .qaf-navdock:hover .qaf-navdock__label {
+  opacity: 1;
+  transform: translateX(0);
+}
+
+.asset-serial-page {
+  width: 100%;
+  max-width: none;
+  margin: 0;
+  padding: 20px;
+  background: var(--bg);
+  box-shadow: none;
+}
+
+.asset-serial-header {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.asset-serial-header .back-btn {
+  margin-bottom: 0;
+}
+
+.back-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  color: #1f2937;
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.back-btn:hover {
+  background: transparent;
+  border-color: transparent;
+}
+
+.back-btn .fa,
+.back-btn .fa::before {
+  font-family: FontAwesome !important;
+  font-size: 12px;
+}
+
+.back-btn__text {
+  line-height: 1.2;
+  display: inline-flex;
+  align-items: center;
+  color: #1f2937;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.back-btn__text:hover,
+.back-btn__text:focus-visible {
+  text-decoration: none;
+}
+
+#assetSerialDetailsAppHost .asset-tabs {
+  display: flex;
+  align-items: flex-end;
+  gap: 24px;
+  margin: 0;
+  padding: 0;
+  border-bottom: 1px solid #d1d5db;
+  overflow: visible;
+}
+
+#assetSerialDetailsAppHost .asset-tab {
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  color: #374151;
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.2;
+  cursor: pointer;
+  padding: 10px 0;
+  margin: 0;
+  min-height: 0;
+  box-shadow: none;
+  border-bottom: 2px solid transparent;
+}
+
+#assetSerialDetailsAppHost .asset-tab.is-active {
+  color: #111827;
+  border-bottom-color: #111827;
+}
+
+.summary-tab-region {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin: 0;
+  padding: 0;
+  background: transparent;
+}
+
+#summaryTabRegion[hidden] {
+  display: none !important;
+}
+
+.asset-tab-card[hidden] {
+  display: none !important;
+}
+
+.asset-card--allocation .allocation-section,
+.asset-card--tickets .tickets-section {
+  margin-top: 0;
+}
+
+.asset-card {
+  position: relative;
+}
+
+/* Box (30x30), zero padding and flex centring come from .qaf-btn +
+   .qaf-btn--square in global.css. Kept here: the overlay placement and the pill
+   radius, which is this button's own look rather than the shared 5px. */
+.asset-edit-btn {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  border-radius: var(--radius-pill, 999px);
+  cursor: pointer;
+  z-index: 2;
+  opacity: 0;
+  transition: opacity 0.18s ease;
+  pointer-events: none;
+  box-shadow: none;
+}
+
+/* CS_SETTING summary edit button â€” QafLibrary.applyCsSettingTheme (scoped to .asset-edit-btn only) */
+#assetSerialDetailsAppHost .asset-edit-btn.qaf-cs-theme-btn {
+  box-shadow: none;
+}
+
+#assetSerialDetailsAppHost .asset-edit-btn.qaf-cs-theme-btn--primary,
+#assetSerialDetailsAppHost .asset-edit-btn.qaf-cs-theme-btn--primary:hover,
+#assetSerialDetailsAppHost .asset-edit-btn.qaf-cs-theme-btn--primary:focus,
+#assetSerialDetailsAppHost .asset-edit-btn.qaf-cs-theme-btn--primary:active {
+  border: 1px solid var(--ButtonBackGroundColor, #000000);
+  background: var(--ButtonBackGroundColor, #000000);
+  color: var(--ButtonTextColor, #ffffff);
+  transform: none;
+}
+
+/* CS_SETTING dynamic theme: color and background-color only. */
+#assetSerialDetailsAppHost .asset-edit-btn.qaf-cs-theme-btn--primary,
+#assetSerialDetailsAppHost .asset-edit-btn.qaf-cs-theme-btn--primary:hover,
+#assetSerialDetailsAppHost .asset-edit-btn.qaf-cs-theme-btn--primary:focus,
+#assetSerialDetailsAppHost .asset-edit-btn.qaf-cs-theme-btn--primary:active {
+  color: var(--ButtonTextColor, #ffffff);
+  background-color: var(--ButtonBackGroundColor, #000000);
+}
+
+#assetSerialDetailsAppHost .asset-edit-btn.qaf-cs-theme-btn .fa,
+#assetSerialDetailsAppHost .asset-edit-btn.qaf-cs-theme-btn i {
+  color: inherit;
+}
+
+#summaryTabRegion:hover .asset-edit-btn:not([hidden]),
+#summaryTabRegion:focus-within .asset-edit-btn:not([hidden]) {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.asset-edit-btn .fa,
+.asset-edit-btn .fa::before {
+  font-family: FontAwesome !important;
+  font-size: 12px;
+}
+
+.allocation-section,
+.tickets-section {
+  margin-top: 16px;
+}
+
+.allocation-heading,
+.tickets-heading,
+.history-log-heading,
+.other-detail-title {
+  margin: 0 0 8px;
+  font-size: 16px;
+  font-weight: 600;
+  color: #0f172a;
+  letter-spacing: 0.01em;
+}
+
+.allocation-table-wrap,
+.tickets-table-wrap,
+.history-log-table-wrap,
+.other-detail-table-wrap {
+  width: 100%;
+  min-width: 0;
+  margin-top: 10px;
+  /* Sticky header + 5 body rows visible; scroll vertically for the rest */
+  max-height: var(--asd-table-max-h);
+  overflow-x: auto;
+  overflow-y: auto;
+  /* Reserve the vertical scrollbar lane even before it is needed,
+     so the table width never changes when rows exceed 5. */
+  scrollbar-gutter: stable;
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  background: #ffffff;
+}
+
+/*
+ * Scrollbars occupy their space PERMANENTLY (thin / 10px) but are painted
+ * transparent until hover. The scrollbar therefore never enters or leaves
+ * the layout â€” only its color changes â€” so table/grid content no longer
+ * jumps or resizes when the scrollbar "appears" on hover.
+ */
+.allocation-table-wrap,
+.tickets-table-wrap,
+.history-log-table-wrap,
+.other-detail-table-wrap,
+.detail-section-grid {
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+}
+
+.allocation-table-wrap:hover,
+.tickets-table-wrap:hover,
+.history-log-table-wrap:hover,
+.other-detail-table-wrap:hover,
+.detail-section-grid:hover {
+  scrollbar-color: #c7d2e1 #f8fafc;
+}
+
+.allocation-table-wrap::-webkit-scrollbar,
+.tickets-table-wrap::-webkit-scrollbar,
+.history-log-table-wrap::-webkit-scrollbar,
+.other-detail-table-wrap::-webkit-scrollbar,
+.detail-section-grid::-webkit-scrollbar {
+  width: var(--asd-scrollbar-size);
+  height: var(--asd-scrollbar-size);
+}
+
+.allocation-table-wrap::-webkit-scrollbar-track,
+.tickets-table-wrap::-webkit-scrollbar-track,
+.history-log-table-wrap::-webkit-scrollbar-track,
+.other-detail-table-wrap::-webkit-scrollbar-track,
+.detail-section-grid::-webkit-scrollbar-track {
+  background: transparent;
+  border-radius: 999px;
+}
+
+.allocation-table-wrap::-webkit-scrollbar-thumb,
+.tickets-table-wrap::-webkit-scrollbar-thumb,
+.history-log-table-wrap::-webkit-scrollbar-thumb,
+.other-detail-table-wrap::-webkit-scrollbar-thumb,
+.detail-section-grid::-webkit-scrollbar-thumb {
+  background: transparent;
+  border-radius: 999px;
+}
+
+.allocation-table-wrap:hover::-webkit-scrollbar-track,
+.tickets-table-wrap:hover::-webkit-scrollbar-track,
+.history-log-table-wrap:hover::-webkit-scrollbar-track,
+.other-detail-table-wrap:hover::-webkit-scrollbar-track,
+.detail-section-grid:hover::-webkit-scrollbar-track {
+  background: #f8fafc;
+}
+
+.allocation-table-wrap:hover::-webkit-scrollbar-thumb,
+.tickets-table-wrap:hover::-webkit-scrollbar-thumb,
+.history-log-table-wrap:hover::-webkit-scrollbar-thumb,
+.other-detail-table-wrap:hover::-webkit-scrollbar-thumb,
+.detail-section-grid:hover::-webkit-scrollbar-thumb {
+  background: linear-gradient(180deg, #d7e0ec 0%, #b8c6da 100%);
+  border: 2px solid #f8fafc;
+}
+
+.allocation-table-wrap::-webkit-scrollbar-corner,
+.tickets-table-wrap::-webkit-scrollbar-corner,
+.history-log-table-wrap::-webkit-scrollbar-corner,
+.other-detail-table-wrap::-webkit-scrollbar-corner,
+.detail-section-grid::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+.allocation-table,
+.tickets-table,
+.history-log-table,
+.other-detail-table {
+  width: 100%;
+  min-width: max-content;
+  /* "separate" keeps the sticky header's bottom border attached while scrolling */
+  border-collapse: separate;
+  border-spacing: 0;
+  table-layout: fixed;
+  background: var(--color-bg-surface, #fff);
+}
+
+/* GridTable owns these tables' sizing once resizing is on: it sets
+   table-layout:fixed, an inline pixel width summed from its <colgroup>, and
+   min-width:0 !important. Only "still fill the wrap when the columns total less
+   than its width" is the page's call, and it needs this weight to clear the
+   engine's own !important. */
+#assetSerialDetailsAppHost .allocation-table,
+#assetSerialDetailsAppHost .tickets-table,
+#assetSerialDetailsAppHost .history-log-table,
+#assetSerialDetailsAppHost .other-detail-table {
+  min-width: 100% !important;
+}
+
+/* One uniform row height everywhere so "5 visible rows" is deterministic.
+   (Table cells treat height as a minimum, so wrapped ticket rows can still grow.) */
+.allocation-table th,
+.allocation-table td,
+.tickets-table th,
+.tickets-table td,
+.history-log-table th,
+.history-log-table td,
+.other-detail-table th,
+.other-detail-table td {
+  height: var(--asd-cell-h);
+}
+
+.allocation-table thead,
+.tickets-table thead,
+.history-log-table thead,
+.other-detail-table thead {
+  background: #f8fafc;
+}
+
+/* Cell spacing, type and rules all come from global.css's tokens - same values
+   its shared `th`/`td` rule uses - but declared at page scope so the portal's
+   own table stylesheet cannot outrank them. The last four declarations are this
+   page's own: single-line cells that ellipsize, and no column rules. */
+.allocation-table th,
+.allocation-table td,
+.tickets-table th,
+.history-log-table th,
+.history-log-table td,
+.other-detail-table th,
+.other-detail-table td {
+  padding: var(--space-4, 10px) var(--space-4, 10px);
+  font-size: var(--font-size-md, 12px);
+  border-bottom: 1px solid var(--color-border-default, #e5e7eb);
+  text-align: left;
+  vertical-align: middle;
+  line-height: 1.35;
+  border-right: none;
+  white-space: nowrap !important;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tickets-table td {
+  padding: 10px 10px;
+  font-size: 12px;
+  border-bottom: 1px solid #e5e7eb;
+  border-right: none;
+  text-align: left;
+  vertical-align: middle;
+  white-space: nowrap !important;
+  line-height: 1.35;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+:where(#assetSerialDetailsAppHost) .tickets-table tbody tr.tickets-table__row--wrap td {
+  white-space: normal !important;
+  overflow: visible;
+  text-overflow: clip;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+  vertical-align: top;
+}
+
+/* Sticky header - same reasoning and same token values as global.css's shared
+   `th`. `overflow: visible` / `text-overflow: clip` are the page-specific part:
+   the header must not clip its absolute sort icon or resize handle (the label
+   itself ellipsizes, see .th-label). */
+.allocation-table th,
+.tickets-table th,
+.history-log-table th,
+.other-detail-table th {
+  position: sticky;
+  top: 0;
+  z-index: var(--z-sticky, 2);
+  color: var(--color-text-secondary, #334155);
+  font-weight: var(--font-weight-regular, 400);
+  background: var(--color-bg-subtle, #f8fafc);
+  box-shadow: none;
+  overflow: visible;
+  text-overflow: clip;
+}
+
+/* The band the sort glyph needs is reserved by .th-label itself in global.css,
+   so these four tables no longer pad their header cells for it. Two places
+   reserving the same space is what made these headers ellipsize earlier than
+   the rest of the app. */
+
+:where(#assetSerialDetailsAppHost) .tickets-table th.is-sortable {
+  cursor: pointer;
+}
+
+:where(#assetSerialDetailsAppHost) .history-log-table th.is-sortable {
+  cursor: pointer;
+}
+
+:where(#assetSerialDetailsAppHost) .other-detail-table th.is-sortable {
+  cursor: pointer;
+}
+
+/*
+ * The header label's ellipsis and the sort glyph's box/offset/reveal come from
+ * global.css's "Grid Table Runtime" section, which is where this page's copies
+ * of them were lifted to. The band that keeps the glyph off the heading text is
+ * now reserved by .th-label itself rather than by the header's padding, so it
+ * holds at any column width and cannot be undone by a padding override.
+ */
+
+/*
+ * Column adjustment visuals stay GridTable's (library.js): it injects the
+ * .gt-col-resizer handle, its "|" separator (::after), the .gt-resize-line drag
+ * guide and the body.is-column-resizing cursor lock. The handle's geometry and
+ * the guide are deliberately NOT redeclared here - a page-scoped copy would
+ * outrank the shared rules (0,2,0 beats 0,1,0) and suppress them.
+ *
+ * The one page-level addition is the reveal below, the same behavior global.css
+ * already gives Service Dashboard and Team Dashboard: library.js paints only the
+ * separator directly under the pointer, so hovering anywhere on the header row
+ * here brings up EVERY column boundary at once and the whole grid reads as
+ * adjustable. It is purely a hover state - nothing about the resting table, its
+ * layout or the drag behavior changes.
+ *
+ * `th:not(:last-child)` because the trailing handle sits on the table's own
+ * outer edge (against the wrap border), where it would thicken that border
+ * rather than separate two columns.
+ */
+:where(#assetSerialDetailsAppHost) .allocation-table thead:hover th:not(:last-child) .gt-col-resizer::after,
+:where(#assetSerialDetailsAppHost) .tickets-table thead:hover th:not(:last-child) .gt-col-resizer::after,
+:where(#assetSerialDetailsAppHost) .history-log-table thead:hover th:not(:last-child) .gt-col-resizer::after,
+:where(#assetSerialDetailsAppHost) .other-detail-table thead:hover th:not(:last-child) .gt-col-resizer::after {
+  background: var(--color-border-default, #e5e7eb);
+}
+
+/* The boundary actually under the pointer - and the one being dragged, which
+   keeps its tone even after the cursor leaves the header - stays on library.js's
+   stronger color, so the active edge is still distinguishable from the revealed
+   set. Listed after (and one notch above) the reveal rule so it wins the tie. */
+:where(#assetSerialDetailsAppHost) .allocation-table thead th:not(:last-child) .gt-col-resizer:hover::after,
+:where(#assetSerialDetailsAppHost) .allocation-table thead th:not(:last-child) .gt-col-resizer.is-resizing::after,
+:where(#assetSerialDetailsAppHost) .tickets-table thead th:not(:last-child) .gt-col-resizer:hover::after,
+:where(#assetSerialDetailsAppHost) .tickets-table thead th:not(:last-child) .gt-col-resizer.is-resizing::after,
+:where(#assetSerialDetailsAppHost) .history-log-table thead th:not(:last-child) .gt-col-resizer:hover::after,
+:where(#assetSerialDetailsAppHost) .history-log-table thead th:not(:last-child) .gt-col-resizer.is-resizing::after,
+:where(#assetSerialDetailsAppHost) .other-detail-table thead th:not(:last-child) .gt-col-resizer:hover::after,
+:where(#assetSerialDetailsAppHost) .other-detail-table thead th:not(:last-child) .gt-col-resizer.is-resizing::after {
+  background: var(--color-border-strong, #c8ccd4);
+}
+
+.allocation-table td,
+.tickets-table td,
+.history-log-table td,
+.other-detail-table td {
+  color: #1f2937;
+}
+
+/* .allocation-table tbody tr:last-child td,
+.tickets-table tbody tr:last-child td,
+.history-log-table tbody tr:last-child td,
+.other-detail-table tbody tr:last-child td {
+  border-bottom: none;
+} */
+
+.allocation-empty,
+.history-log-empty,
+.tickets-empty {
+  text-align: center !important;
+  color: #374151;
+}
+
+.allocation-loading-head {
+  font-weight: 400;
+  color: #64748b;
+  text-align: left;
+}
+
+:where(#assetSerialDetailsAppHost) .allocation-table .row-actions-head {
+  width: 28px;
+  min-width: 28px;
+  max-width: 28px;
+  padding: 0;
+  text-align: center;
+}
+
+:where(#assetSerialDetailsAppHost) .allocation-table .row-actions {
+  position: relative;
+  width: 28px;
+  min-width: 28px;
+  max-width: 28px;
+  padding: 0;
+  text-align: center;
+  overflow: visible;
+}
+
+:where(#assetSerialDetailsAppHost) .allocation-table .row-actions--empty {
+  background: transparent;
+}
+
+:where(#assetSerialDetailsAppHost) .allocation-table .row-actions__toggle {
+  border: 0;
+  background: transparent;
+  width: 100%;
+  min-height: 40px;
+  padding: 0;
+  cursor: pointer;
+  color: #111827;
+}
+
+:where(#assetSerialDetailsAppHost) .allocation-table .row-actions__toggle .fa {
+  font-family: FontAwesome !important;
+  font-size: 16px;
+}
+
+:where(#assetSerialDetailsAppHost) .allocation-table .row-actions__menu {
+  position: fixed;
+  left: 0;
+  top: 0;
+  min-width: 126px;
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  box-shadow: none;
+  z-index: 1000;
+  padding: 4px 0;
+}
+
+:where(#assetSerialDetailsAppHost) .allocation-table .row-actions__menu.row-actions__menu--up {
+  top: auto;
+  bottom: calc(100% - 8px);
+}
+
+:where(#assetSerialDetailsAppHost) .allocation-table .row-actions__menu.row-actions__menu--align-right {
+  left: auto;
+  right: 4px;
+}
+
+:where(#assetSerialDetailsAppHost) .allocation-table .row-actions__menu[hidden] {
+  display: none;
+}
+
+:where(#assetSerialDetailsAppHost) .allocation-table .row-actions__item {
+  width: 100%;
+  border: 0;
+  background: #fff;
+  text-align: left;
+  padding: 6px 8px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  font-size: 12px;
+  color: #111827;
+}
+
+:where(#assetSerialDetailsAppHost) .allocation-table .row-actions__item:hover {
+  background: #f8fafc;
+}
+
+:where(#assetSerialDetailsAppHost) .allocation-table .row-actions__item .fa {
+  width: 12px;
+  min-width: 12px;
+  text-align: center;
+  font-family: FontAwesome !important;
+}
+
+:where(#assetSerialDetailsAppHost) .allocation-table th.is-sortable {
+  cursor: pointer;
+}
+
+:where(#assetSerialDetailsAppHost) .allocation-table .allocation-remarks-cell__text {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: default;
+}
+
+:where(#assetSerialDetailsAppHost) .allocation-remarks-tooltip-float {
+  position: fixed;
+  z-index: 10000;
+  min-width: 120px;
+  max-width: min(320px, 70vw);
+  padding: 8px 10px;
+  border: 1px solid #000;
+  border-radius: 6px;
+  background: #fff;
+  color: #000;
+  font-size: 12px;
+  line-height: 1.45;
+  font-weight: 400;
+  white-space: normal;
+  word-break: break-word;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
+  pointer-events: none;
+}
+
+:where(#assetSerialDetailsAppHost) .allocation-remarks-tooltip-float[hidden] {
+  display: none !important;
+}
+
+.history-log-section {
+  margin-top: 16px;
+}
+
+.history-log-comment-more {
+  border: none;
+  background: none;
+  color: #2563eb;
+  cursor: pointer;
+  font-size: inherit;
+  font-family: inherit;
+  line-height: inherit;
+  padding: 0;
+  margin: 0;
+  text-decoration: none;
+  font-weight: 500;
+}
+
+.history-log-comment-more:hover,
+.history-log-comment-more:focus-visible {
+  color: #1d4ed8;
+  text-decoration: underline;
+  outline: none;
+}
+
+.history-log-table td.history-log-comment-cell {
+  overflow: visible;
+  text-overflow: clip;
+}
+
+body.history-comment-modal-open {
+  overflow: hidden;
+}
+
+.history-comment-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+
+.history-comment-modal[hidden] {
+  display: none;
+}
+
+.history-comment-modal__backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.45);
+}
+
+.history-comment-modal__dialog {
+  position: relative;
+  width: min(520px, 100%);
+  max-height: min(72vh, 520px);
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  box-shadow: 0 20px 40px rgba(15, 23, 42, 0.18);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.history-comment-modal__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 16px 18px;
+  border-bottom: 1px solid #e5e7eb;
+  background: #f8fafc;
+}
+
+.history-comment-modal__title {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: #0f172a;
+}
+
+.history-comment-modal__close {
+  border: none;
+  background: transparent;
+  color: #64748b;
+  font-size: 24px;
+  line-height: 1;
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.history-comment-modal__close:hover,
+.history-comment-modal__close:focus-visible {
+  background: #e2e8f0;
+  color: #0f172a;
+  outline: none;
+}
+
+.history-comment-modal__body {
+  padding: 18px;
+  overflow: auto;
+  color: #1f2937;
+  font-size: 14px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+}
+
+.other-detail-content {
+  margin-top: 6px;
+  display: grid;
+  gap: 14px;
+}
+
+.other-detail-section {
+  min-width: 0;
+}
+
+.tab-panel {
+  width: 100%;
+}
+
+#summaryPanel {
+  position: relative;
+}
+
+#summaryPanel[hidden] .asset-edit-btn {
+  display: none !important;
+  pointer-events: none;
+  visibility: hidden;
+}
+
+.meta-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+}
+
+.meta-row {
+  display: grid;
+  grid-template-columns: 220px 1fr;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+/* .meta-row:last-child {
+  border-bottom: none;
+} */
+
+#assetIdRow {
+  display: none;
+}
+
+.meta-label,
+.meta-value {
+  padding: 10px 12px;
+  font-size: 12px;
+}
+
+.meta-label {
+  color: #4b5563;
+}
+
+.meta-value {
+  color: #111827;
+}
+
+.summary-sections {
+  margin-top: 18px;
+  display: grid;
+  gap: 14px;
+}
+
+.detail-section {
+  border: 1px solid #d8dee7;
+  border-radius: 8px;
+  overflow: hidden;
+  background: #ffffff;
+  box-shadow: none;
+}
+
+.detail-section-title {
+  margin: 0;
+  padding: 10px 12px;
+  font-size: 16px;
+  font-weight: 600;
+  border-bottom: 1px solid #e5e7eb;
+  background: #f8fafc;
+  color: #0f172a;
+  letter-spacing: 0.01em;
+}
+
+/*
+ * Column-flow field grid: fields fill downward 5 rows, then wrap sideways
+ * into a new column. Extra columns are reached with the horizontal scrollbar.
+ * Applies to every summary detail section (Provider Information included â€”
+ * all sections share the same renderer and the same max height).
+ */
+.detail-section-grid {
+  display: grid;
+  grid-auto-flow: column;
+  grid-template-rows: repeat(5, var(--asd-cell-h));
+  grid-auto-columns: minmax(340px, 1fr);
+  max-height: var(--asd-grid-max-h);
+  overflow-x: auto;
+  overflow-y: hidden;
+  background: #ffffff;
+}
+
+.detail-section-grid .summary-col {
+  grid-template-columns: 220px 1fr;
+  height: var(--asd-cell-h);
+  align-items: center;
+  border-bottom: 1px solid #e5e7eb;
+  min-width: 0;
+}
+
+/* Last visual row of each column (may be fewer than 5 cells): no bottom border */
+/* .detail-section-grid .summary-col.is-column-end {
+  border-bottom: none;
+} */
+
+/* Last column: no right border against the card edge */
+.detail-section-grid .summary-col.is-last-column {
+  border-right: none;
+}
+
+/* Fixed-height cells: single line with ellipsis (full text via title tooltip) */
+.detail-section-grid .summary-key,
+.detail-section-grid .summary-value {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+.summary-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+/* .summary-row:last-child {
+  border-bottom: none;
+} */
+
+.summary-col {
+  display: grid;
+  grid-template-columns: minmax(220px, 32%) 1fr;
+  border-right: 1px solid #e5e7eb;
+  min-height: 40px;
+}
+
+.summary-col:last-child {
+  border-right: none;
+}
+
+.summary-key,
+.summary-value {
+  padding: 9px 12px;
+  font-size: 12px;
+}
+
+.summary-key {
+  color: #374151;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.summary-value {
+  color: #111827;
+  word-break: break-word;
+}
+
+.summary-attachment-link {
+  text-decoration: none;
+  color: #009ce7;
+  cursor: pointer;
+}
+
+.summary-attachment-link:hover {
+  color: #009ce7;
+}
+
+.empty-note {
+  margin: 4px 0;
+  color: #6b7280;
+  font-size: 12px;
+}
+
+@media (max-width: 900px) {
+  .summary-row {
+    grid-template-columns: 1fr;
+  }
+
+  .summary-row .summary-col {
+    border-right: none;
+    border-bottom: 1px solid #e5e7eb;
+  }
+
+  /* .summary-row .summary-col:last-child {
+    border-bottom: none;
+  } */
+
+  /* Narrower minimum column width for the sideways-scrolling grids on small screens */
+  .detail-section-grid {
+    grid-auto-columns: minmax(280px, 1fr);
+  }
+}
+
+/* ------------------------------------------------------------------
+   Asset Dependency tab
+------------------------------------------------------------------ */
+
+.dependency-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.dependency-view-buttons {
+  display: flex;
+  align-items: center;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  overflow: hidden;
+  background: #fff;
+}
+
+.dependency-view-buttons .dep-view-btn {
+  width: 36px;
+  height: 32px;
+  border: 0;
+  border-right: 1px solid #e5e7eb;
+  background: #fff;
+  color: #4b5563;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.dependency-view-buttons .dep-view-btn:last-child {
+  border-right: 0;
+}
+
+.dependency-view-buttons .dep-view-btn:hover {
+  background: #f3f4f6;
+  color: #2563eb;
+}
+
+.dependency-view-buttons .dep-view-btn.active {
+  background: #edf4ff;
+  color: #2874df;
+}
+
+.dep-view-icon {
+  width: 20px;
+  height: 20px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.dep-view-icon svg {
+  width: 18px;
+  height: 18px;
+  display: block;
+}
+
+.dependency-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+/* Height and corner radius come from .qaf-btn in global.css. */
+.add-relationship-btn {
+  padding: 0 14px;
+  font-size: 12px;
+  font-weight: 500;
+  border: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+/* CS_SETTING Add Relationship button — QafLibrary.applyCsSettingTheme (scoped to .add-relationship-btn only) */
+#assetSerialDetailsAppHost .add-relationship-btn.qaf-cs-theme-btn--primary,
+#assetSerialDetailsAppHost .add-relationship-btn.qaf-cs-theme-btn--primary:hover,
+#assetSerialDetailsAppHost .add-relationship-btn.qaf-cs-theme-btn--primary:focus,
+#assetSerialDetailsAppHost .add-relationship-btn.qaf-cs-theme-btn--primary:active {
+  color: var(--ButtonTextColor, #ffffff);
+  background-color: var(--ButtonBackGroundColor, #000000);
+  background: var(--ButtonBackGroundColor, #000000);
+  border-color: var(--ButtonBackGroundColor, #000000);
+}
+
+.dependency-zoom-buttons {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  overflow: hidden;
+  background: #fff;
+}
+
+.dependency-zoom-buttons button {
+  width: 32px;
+  height: 30px;
+  border: 0;
+  background: #fff;
+  color: #374151;
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.dependency-zoom-buttons button:hover {
+  background: #f3f4f6;
+}
+
+.dependency-zoom-level {
+  min-width: 44px;
+  text-align: center;
+  font-size: 12px;
+  color: #6b7280;
+  padding: 0 4px;
+  border-left: 1px solid #e5e7eb;
+  border-right: 1px solid #e5e7eb;
+}
+
+.dependency-viewport {
+  position: relative;
+  margin-top: 10px;
+  width: 100%;
+  height: 480px;
+  overflow: hidden;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  background: #fff;
+  cursor: grab;
+  user-select: none;
+}
+
+.dependency-viewport.is-dragging {
+  cursor: grabbing;
+}
+
+.dependency-world {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 2400px;
+  height: 1400px;
+  transform-origin: 0 0;
+}
+
+.dependency-edges {
+  position: absolute;
+  inset: 0;
+  width: 2400px;
+  height: 1400px;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.dependency-edge-path {
+  fill: none;
+  stroke: #98a2b3;
+  stroke-width: 2;
+  marker-end: url(#dependencyArrow);
+}
+
+.dependency-edge-label {
+  font-size: 12px;
+  fill: #374151;
+  paint-order: stroke;
+  stroke: #fff;
+  stroke-width: 6px;
+  stroke-linejoin: round;
+}
+
+.dependency-node {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: move;
+}
+
+/* The parent (opened) asset is pinned at the top of the graph. */
+.dependency-node.is-fixed {
+  cursor: default;
+}
+
+.dependency-node-label {
+  min-width: 110px;
+  max-width: 230px;
+  padding: 9px 16px;
+  border: 1px solid #d7d7d7;
+  border-radius: 18px;
+  background: #fff;
+  text-align: center;
+  white-space: normal;
+  overflow-wrap: break-word;
+  word-break: break-word;
+  overflow: visible;
+  text-overflow: clip;
+  font-size: 12px;
+  line-height: 1.35;
+  color: #1f2937;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.06);
+}
+
+.dependency-node.is-root .dependency-node-label {
+  background: #6338e5;
+  color: #fff;
+  border-color: #4c26c9;
+  font-size: 14px;
+  min-width: 140px;
+  padding: 11px 20px;
+  box-shadow: 0 3px 10px rgba(76, 38, 201, 0.28);
+}
+
+.dependency-node:hover .dependency-node-label {
+  border-color: #9ca3af;
+}
+
+.dependency-node.is-selected .dependency-node-label {
+  outline: 2px solid #6338e5;
+  outline-offset: 2px;
+}
+
+.dependency-hint {
+  margin-top: 8px;
+  font-size: 12px;
+  color: #6b7280;
+}
+
+.dependency-empty,
+.dependency-loading {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  font-size: 12px;
+  color: #6b7280;
+}
+
+.dependency-empty[hidden],
+.dependency-loading[hidden] {
+  display: none !important;
+}
+
+#assetSerialDetailsAppHost * {
+  box-shadow: none !important;
+}
+
+#assetSerialDetailsAppHost :is(
+  a,
+  button,
+  [role="button"],
+  [data-tab-target],
+  [data-row-action],
+  [data-row-menu-toggle],
+  input[type="button"],
+  input[type="submit"]
+) {
+  cursor: pointer;
+}
+
+/* ------------------------------------------------------------------
+   Add Relationship modal
+------------------------------------------------------------------ */
+
+body.rel-modal-open {
+  overflow: hidden;
+}
+
+.rel-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+
+.rel-modal[hidden] {
+  display: none;
+}
+
+.rel-modal__backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.45);
+}
+
+.rel-modal__dialog {
+  position: relative;
+  width: min(480px, 100%);
+  max-height: min(86vh, 620px);
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  box-shadow: 0 20px 40px rgba(15, 23, 42, 0.18);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.rel-modal__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 16px 18px;
+  border-bottom: 1px solid #e5e7eb;
+  background: #f8fafc;
+  flex: 0 0 auto;
+}
+
+.rel-modal__title {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: #0f172a;
+}
+
+/* Plain black close icon: no hover colour, background or focus styling
+   in any state. */
+.rel-modal__close,
+.rel-modal__close:hover,
+.rel-modal__close:focus,
+.rel-modal__close:focus-visible,
+.rel-modal__close:active {
+  border: none;
+  background: transparent;
+  background-color: transparent;
+  box-shadow: none;
+  color: #000000;
+  font-size: 24px;
+  line-height: 1;
+  width: 32px;
+  height: 32px;
+  border-radius: 0;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  outline: none;
+}
+
+.rel-modal__body {
+  padding: 18px;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.rel-modal__footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  padding: 14px 18px;
+  border-top: 1px solid #e5e7eb;
+  background: #f8fafc;
+  flex: 0 0 auto;
+}
+
+/* Height and corner radius come from .qaf-btn in global.css. */
+.rel-modal__btn {
+  padding: 0 18px;
+  font-size: 12px;
+  font-weight: 500;
+  border: none;
+  cursor: pointer;
+}
+
+.rel-modal__btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* CS_SETTING Add Relationship modal buttons — QafLibrary.applyCsSettingTheme */
+#assetSerialDetailsAppHost ~ .rel-modal .rel-modal__btn.qaf-cs-theme-btn--primary,
+#assetSerialDetailsAppHost ~ .rel-modal .rel-modal__btn.qaf-cs-theme-btn--primary:hover,
+#assetSerialDetailsAppHost ~ .rel-modal .rel-modal__btn.qaf-cs-theme-btn--primary:focus,
+#assetSerialDetailsAppHost ~ .rel-modal .rel-modal__btn.qaf-cs-theme-btn--primary:active,
+/* Cancel button matches the same background/text color used by the
+   "+ Add Relationship" / "+ Add Repository" themed button so both
+   footer actions share one consistent look. */
+#assetSerialDetailsAppHost ~ .rel-modal .rel-modal__btn.qaf-cs-theme-btn--secondary,
+#assetSerialDetailsAppHost ~ .rel-modal .rel-modal__btn.qaf-cs-theme-btn--secondary:hover,
+#assetSerialDetailsAppHost ~ .rel-modal .rel-modal__btn.qaf-cs-theme-btn--secondary:focus,
+#assetSerialDetailsAppHost ~ .rel-modal .rel-modal__btn.qaf-cs-theme-btn--secondary:active {
+  color: var(--ButtonTextColor, #ffffff);
+  background-color: var(--ButtonBackGroundColor, #000000);
+  background: var(--ButtonBackGroundColor, #000000);
+  border-color: var(--ButtonBackGroundColor, #000000);
+}
+
+.rel-field-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 2px 0;
+}
+
+.rel-field-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: #111827;
+}
+
+.rel-field-value {
+  font-size: 12px;
+  font-weight: 400;
+  color: #374151;
+}
+
+/* Source CI shows the full "SerialNumber-AssetName" value; wrap instead
+   of truncating so long names remain fully visible. */
+#relSourceCiValue {
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  text-align: right;
+  max-width: 65%;
+}
+
+.rel-accordion {
+  border-top: 1px solid #e5e7eb;
+  padding-top: 10px;
+}
+
+.rel-accordion-row {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border: none;
+  background: transparent;
+  padding: 6px 0;
+  cursor: pointer;
+  text-align: left;
+}
+
+.rel-accordion-row__right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.rel-accordion-chevron {
+  color: #6b7280;
+  font-size: 14px;
+  transition: transform 0.15s ease;
+}
+
+.rel-accordion-row[aria-expanded="true"] .rel-accordion-chevron {
+  transform: rotate(90deg);
+}
+
+.rel-accordion-row--disabled,
+.rel-accordion-row:disabled {
+  cursor: not-allowed;
+}
+
+.rel-accordion-row--disabled .rel-field-label,
+.rel-accordion-row:disabled .rel-field-label {
+  color: #9ca3af;
+}
+
+.rel-accordion-row--disabled .rel-accordion-chevron,
+.rel-accordion-row:disabled .rel-accordion-chevron {
+  color: #d1d5db;
+}
+
+.rel-type-panel,
+.rel-dest-panel {
+  margin-top: 8px;
+}
+
+.rel-type-panel[hidden],
+.rel-dest-panel[hidden] {
+  display: none !important;
+}
+
+.rel-type-table-wrap {
+  border: 1px solid #e0e0e0;
+  border-radius: 4px;
+  max-height: 220px;
+  overflow: auto;
+}
+
+.rel-type-table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+}
+
+.rel-type-table th,
+.rel-type-table td {
+  border-bottom: 1px solid #e0e0e0;
+  padding: 8px 10px;
+  font-size: 12px;
+  text-align: left;
+  vertical-align: middle;
+  line-height: 1.35;
+}
+
+.rel-type-table thead th {
+  position: sticky;
+  top: 0;
+  background: #f5f5f5;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: #374151;
+  letter-spacing: 0.02em;
+  z-index: 1;
+}
+
+.rel-type-table tbody tr {
+  cursor: pointer;
+}
+
+.rel-type-table tbody td {
+  font-weight: 400;
+  color: #111827;
+  background: #fff;
+}
+
+.rel-type-table tbody tr:hover td {
+  background: #f3f4f6;
+}
+
+.rel-type-table tbody tr.is-selected td {
+  background: #edf4ff;
+  color: #2874df;
+}
+
+.rel-type-table-empty {
+  text-align: center;
+  color: #6b7280;
+  padding: 16px;
+  font-size: 12px;
+}
+
+.rel-dest-toolbar {
+  display: flex;
+  align-items: flex-start;
+  justify-content: flex-start;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+
+/* ------------------------------------------------------------------
+   Destination CI "Type" / "Category" filter fields.
+   Styling mirrors the Helpdesk My Ticket "Ticket Filter" modal fields
+   (.hmt-filter-field / .hmt-filter-select-input): a #d1d5db-bordered
+   trigger sits in front of its label, both fields stacking one below
+   the other (Type row, then Category row).
+   ------------------------------------------------------------------ */
+.rel-dest-filter--stacked {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 100%;
+  max-width: 340px;
+}
+
+.rel-dest-filter__field {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.rel-dest-filter__field-label {
+  display: inline-block;
+  flex: 0 0 auto;
+  min-width: 64px;
+  margin-bottom: 0;
+  font-size: 14px;
+  font-weight: 500;
+  color: #000;
+}
+
+.rel-dest-filter__field .rel-dest-select-wrap {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.rel-dest-filter__select {
+  width: 100%;
+  min-height: 40px;
+  padding: 0 8px;
+  font-size: 14px;
+  font-weight: 400;
+  color: #000;
+  background: #fff;
+  border: 1px solid #d1d5db;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.rel-dest-filter__select:hover,
+.rel-dest-filter__select:focus,
+.rel-dest-filter__select:focus-visible {
+  border-color: #9ca3af;
+  outline: none;
+  box-shadow: none;
+}
+
+/* ------------------------------------------------------------------
+   Destination CI "Type" / "Category" custom dropdowns.
+   Same pattern as the Agent Performance Dashboard filter selects:
+   the native <select> stays in the DOM (form semantics + existing JS
+   hooks) but is visually replaced by a trigger + menu, so the menu
+   can be capped at exactly 4 visible rows with an inner scrollbar.
+   ------------------------------------------------------------------ */
+.rel-dest-select-wrap {
+  position: relative;
+  display: block;
+  width: 100%;
+}
+
+.rel-dest-select--native {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.rel-dest-select-trigger {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  height: 40px;
+  min-height: 40px;
+  max-height: 40px;
+  padding: 0 34px 0 8px;
+  border: 1px solid #d1d5db;
+  border-radius: 4px;
+  background: #fff;
+  color: #000;
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 1.25;
+  text-align: left;
+  cursor: pointer;
+  box-sizing: border-box;
+  position: relative;
+}
+
+.rel-dest-select-trigger:hover,
+.rel-dest-select-trigger:focus-visible {
+  border-color: #9ca3af;
+  outline: none;
+}
+
+.rel-dest-select-trigger__label {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rel-dest-select__chevron {
+  position: absolute;
+  top: 50%;
+  right: 14px;
+  flex: 0 0 auto;
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin-top: -5px;
+  border-right: 1.5px solid #6b7280;
+  border-bottom: 1.5px solid #6b7280;
+  font-size: 0;
+  line-height: 0;
+  color: transparent;
+  pointer-events: none;
+  box-sizing: border-box;
+  transition: transform 0.15s ease;
+  transform: rotate(45deg);
+}
+
+.rel-dest-custom-select.is-open .rel-dest-select__chevron {
+  transform: rotate(225deg);
+}
+
+.rel-dest-select-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  z-index: 900;
+  margin: 0;
+  padding: 6px 0;
+  list-style: none;
+  background: #fff;
+  border: 1px solid #d1d5db;
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(15, 23, 42, 0.14);
+  /* Exactly 4 option rows (32px each) plus the 6px top/bottom padding;
+     a 5th+ option scrolls instead of growing the menu. */
+  max-height: 140px;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+  box-sizing: border-box;
+}
+
+/* Flips above the trigger when there is not enough room below it
+   inside the scrolling modal body. */
+.rel-dest-custom-select.is-drop-up .rel-dest-select-menu {
+  top: auto;
+  bottom: calc(100% + 4px);
+}
+
+.rel-dest-select-menu:hover,
+.rel-dest-custom-select.is-open:hover .rel-dest-select-menu {
+  scrollbar-color: #b8b8b8 transparent;
+}
+
+.rel-dest-select-menu::-webkit-scrollbar {
+  width: 8px;
+}
+
+.rel-dest-select-menu::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.rel-dest-select-menu::-webkit-scrollbar-thumb {
+  background-color: transparent;
+  border-radius: 4px;
+}
+
+.rel-dest-select-menu:hover::-webkit-scrollbar-thumb,
+.rel-dest-custom-select.is-open:hover .rel-dest-select-menu::-webkit-scrollbar-thumb {
+  background-color: #b8b8b8;
+}
+
+.rel-dest-select-menu[hidden] {
+  display: none !important;
+}
+
+.rel-dest-select-option {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  height: 36px;
+  min-height: 36px;
+  padding: 0 16px;
+  border: 0;
+  background: transparent;
+  color: #000;
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 1.35;
+  text-align: left;
+  cursor: pointer;
+  box-sizing: border-box;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.rel-dest-select-option:hover,
+.rel-dest-select-option:focus-visible {
+  background: #f3f4f6;
+  outline: none;
+}
+
+.rel-dest-select-option.is-selected {
+  background: #f9fafb;
+  color: #111827;
+}
+
+/* ------------------------------------------------------------------
+   Type filter dropdown — compact variant.
+   Scoped to .rel-dest-select-wrap--type only (the Category dropdown is
+   untouched). Shorter 32px trigger, and the option menu is capped to
+   exactly 4 visible rows (32px each + 6px top/bottom padding = 140px);
+   a 5th+ option scrolls inside the menu instead of growing it.
+   ------------------------------------------------------------------ */
+.rel-dest-select-wrap--type .rel-dest-select-trigger {
+  height: 32px;
+  min-height: 32px;
+  max-height: 32px;
+  font-size: 12px;
+}
+
+.rel-dest-select-wrap--type .rel-dest-select-menu {
+  max-height: 140px;
+}
+
+.rel-dest-select-wrap--type .rel-dest-select-option {
+  height: 32px;
+  min-height: 32px;
+  font-size: 12px;
+}
+
+.rel-dest-pagination {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.rel-dest-page-info {
+  font-size: 12px;
+  color: #6b7280;
+  margin-right: 2px;
+}
+
+.rel-dest-page-btn {
+  width: 26px;
+  height: 26px;
+  border: 1px solid #d1d5db;
+  border-radius: 4px;
+  background: #fff;
+  color: #4b5563;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.rel-dest-page-btn:hover {
+  background: #f3f4f6;
+  color: #2563eb;
+}
+
+.rel-dest-page-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.rel-dest-list {
+  border: 1px solid #e0e0e0;
+  border-radius: 4px;
+  max-height: 220px;
+  overflow: auto;
+}
+
+.rel-dest-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 5px 12px;
+  border-bottom: 1px solid #f0f0f0;
+  font-size: 12px;
+  line-height: 1.2;
+  color: #2563eb;
+}
+
+/* .rel-dest-item:last-child {
+  border-bottom: none;
+} */
+
+.rel-dest-item input[type="checkbox"] {
+  width: 15px;
+  height: 15px;
+  min-height: 0;
+  margin: 0;
+  cursor: pointer;
+}
+
+.rel-dest-item label {
+  cursor: pointer;
+  flex: 1;
+}
+
+.rel-dest-empty {
+  text-align: center;
+  color: #6b7280;
+  padding: 16px;
+  font-size: 12px;
+  margin: 0;
+}
+
+.rel-dest-hint {
+  margin: 8px 0 0;
+  font-size: 12px;
+  color: #6b7280;
+  background: #eff6ff;
+  border: 1px solid #dbeafe;
+  border-radius: 4px;
+  padding: 8px 10px;
+}
+
+.rel-dest-hint[hidden] {
+  display: none !important;
+}
+.summary-col {
+  border-bottom: 1px solid #e5e7eb;
+}

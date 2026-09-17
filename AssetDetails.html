@@ -1,0 +1,307 @@
+<!doctype html>
+<html lang="en" class="qaf-preload">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Asset Serial Details</title>
+  <style>
+    html.qaf-preload .qaf-navdock,
+    html.qaf-preload .asset-serial-page {
+      visibility: hidden;
+    }
+  </style>
+  <link
+    rel="stylesheet"
+    href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/4.7.0/css/font-awesome.min.css"
+    crossorigin="anonymous"
+  />
+  <link rel="stylesheet" href="https://appai.quickappflow.com/Attachment/downloadfile?fileUrl=Pages1%2Fglobal_0186e160-6e3d-4277-8918-55b2fa011c88.css" />
+  <link rel="stylesheet" href="https://appai.quickappflow.com/Attachment/downloadfile?fileUrl=Pages1%2Fasset-serial-details_aaceee5d-b439-4ecb-9ae9-37ad9eb905ef.css" />
+</head>
+<body>
+  <div id="assetSerialDetailsAppHost">
+    <nav class="qaf-navdock" aria-label="Application menu">
+      <button
+        id="qafNavToggle"
+        type="button"
+        class="qaf-navdock__arrow-indicator"
+        aria-label="Pin or expand sidebar"
+        aria-expanded="false"
+      >
+        <i class="fa fa-angle-right" aria-hidden="true"></i>
+      </button>
+      <div id="qafNavdockList" class="qaf-navdock__list"></div>
+    </nav>
+
+    <main class="asset-serial-page qaf-navdock-layout-shift">
+      <header class="asset-serial-header">
+        <div class="back-btn" aria-label="Back to asset list">
+          <a id="backToAssetDetails" class="back-btn__text" href="#">
+            <i class="fa fa-arrow-left" aria-hidden="true" style="margin-right: 8px"></i>
+            Back
+          </a>
+        </div>
+        <nav class="asset-tabs" aria-label="Asset details tabs">
+          <button type="button" class="asset-tab is-active" data-tab-target="summaryPanel" aria-selected="true">Summary</button>
+          <button type="button" class="asset-tab" data-tab-target="otherDetailPanel" aria-selected="false">Other Details</button>
+          <button type="button" class="asset-tab" data-tab-target="historyPanel" aria-selected="false">Audit Log</button>
+          <button type="button" class="asset-tab" data-tab-target="dependencyPanel" aria-selected="false">Asset Relationship</button>
+        </nav>
+      </header>
+
+      <div id="summaryTabRegion" class="summary-tab-region">
+        <section class="asset-card asset-card--summary">
+          <div id="summaryPanel" class="tab-panel is-active" role="tabpanel">
+            <button
+              id="assetEditBtn"
+              type="button"
+              class="asset-edit-btn qaf-btn qaf-btn--square qaf-cs-theme-btn qaf-cs-theme-btn--primary qaf-cs-theme-btn--icon"
+              aria-label="Edit asset"
+              title="Edit asset"
+            >
+              <i class="fa fa-pencil" aria-hidden="true"></i>
+            </button>
+            <div class="meta-grid" aria-label="Asset summary meta">
+              <div id="assetIdRow" class="meta-row">
+                <span class="meta-label">Asset ID</span>
+                <span id="assetIdValue" class="meta-value"></span>
+              </div>
+              <div class="meta-row">
+                <span class="meta-label">Serial Number</span>
+                <span id="serialNumberValue" class="meta-value"></span>
+              </div>
+            </div>
+
+            <div id="summarySections" class="summary-sections"></div>
+          </div>
+        </section>
+
+        <section class="asset-card asset-card--allocation">
+          <section id="allocationSection" class="allocation-section" aria-labelledby="allocationHeading">
+            <h2 id="allocationHeading" class="allocation-heading">Asset Allocation</h2>
+            <div class="allocation-table-wrap qaf-scrollbar-thin">
+              <table id="allocationTable" class="allocation-table" data-resize-key="assetSerialAllocationTable" aria-label="Asset allocation details">
+                <thead>
+                  <tr id="allocationTableHeadRow">
+                    <th class="row-actions-head no-sort no-resize" aria-label="Actions"></th>
+                    <th>Type</th>
+                    <th>Category</th>
+                    <th>Asset Name</th>
+                    <th>Employee</th>
+                    <th>From Date</th>
+                    <th>To Date</th>
+                    <th>Remarks</th>
+                    <th>Created By</th>
+                  </tr>
+                </thead>
+                <tbody id="allocationTableBody">
+                  <tr>
+                    <td colspan="9" class="allocation-empty">No Record Found</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </section>
+        </section>
+
+        <section class="asset-card asset-card--tickets">
+          <section id="ticketsSection" class="tickets-section" aria-labelledby="ticketsHeading">
+            <h2 id="ticketsHeading" class="tickets-heading">Tickets</h2>
+            <div class="tickets-table-wrap qaf-scrollbar-thin">
+              <table id="ticketsTable" class="tickets-table" data-resize-key="assetSerialTicketsTable" aria-label="Asset tickets">
+                <thead>
+                  <tr id="ticketsTableHeadRow"></tr>
+                </thead>
+                <tbody id="ticketsTableBody">
+                  <tr>
+                    <td colspan="1" class="tickets-empty">Loading...</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </section>
+        </section>
+      </div>
+
+      <section id="otherDetailCard" class="asset-card asset-tab-card" hidden>
+        <div id="otherDetailPanel" class="tab-panel" role="tabpanel" hidden>
+          <div id="otherDetailContent" class="other-detail-content">
+            <p class="empty-note">No Record Found</p>
+          </div>
+        </div>
+      </section>
+
+      <section id="historyCard" class="asset-card asset-tab-card" hidden>
+        <div id="historyPanel" class="tab-panel" role="tabpanel" hidden>
+          <section id="historyLogSection" class="history-log-section" aria-labelledby="assetLogHeading">
+            <h2 id="assetLogHeading" class="history-log-heading">Asset Log</h2>
+            <div class="history-log-table-wrap qaf-scrollbar-thin">
+              <table id="historyLogTable" class="history-log-table" data-resize-key="assetSerialHistoryLogTable" aria-label="Asset history log">
+                <thead>
+                  <tr id="historyLogTableHeadRow">
+                    <th>Asset</th>
+                    <th>Employees</th>
+                    <th>Action Date</th>
+                    <th>Status</th>
+                    <th>Comments</th>
+                  </tr>
+                </thead>
+                <tbody id="historyLogTableBody">
+                  <tr>
+                    <td colspan="5" class="history-log-empty">No Record Found</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </section>
+        </div>
+      </section>
+
+      <section id="dependencyCard" class="asset-card asset-tab-card" hidden>
+        <div id="dependencyPanel" class="tab-panel" role="tabpanel" hidden>
+          <section id="dependencySection" class="dependency-section" aria-label="Asset Dependency">
+            <div class="dependency-section-head">
+              <button
+                type="button"
+                id="addRelationshipBtn"
+                class="add-relationship-btn qaf-btn qaf-cs-theme-btn qaf-cs-theme-btn--primary"
+                aria-haspopup="dialog"
+                aria-controls="addRelationshipModal"
+              >+ Add Relationship</button>
+              <div class="dependency-toolbar">
+                <div class="dependency-zoom-buttons">
+                  <button type="button" id="depZoomOut" title="Zoom out" aria-label="Zoom out">−</button>
+                  <span class="dependency-zoom-level" id="depZoomLevel">100%</span>
+                  <button type="button" id="depZoomIn" title="Zoom in" aria-label="Zoom in">+</button>
+                  <button type="button" id="depFitView" title="Fit graph" aria-label="Fit graph">⌾</button>
+                </div>
+              </div>
+            </div>
+
+            <div id="dependencyViewport" class="dependency-viewport">
+              <div id="dependencyWorld" class="dependency-world">
+                <svg id="dependencyEdges" class="dependency-edges" viewBox="0 0 2400 1400">
+                  <defs>
+                    <marker id="dependencyArrow" markerWidth="9" markerHeight="9" refX="7" refY="3.5" orient="auto" markerUnits="userSpaceOnUse">
+                      <path d="M0,0 L7,3.5 L0,7 Z" fill="#aeb8c7"></path>
+                    </marker>
+                  </defs>
+                </svg>
+                <!-- Dependency nodes are rendered dynamically from the API response -->
+              </div>
+              <div class="dependency-empty" id="dependencyEmptyState" hidden>No Record Found</div>
+              <div class="dependency-loading" id="dependencyLoadingState" hidden>Loading...</div>
+            </div>
+          </section>
+        </div>
+      </section>
+
+    </main>
+  </div>
+
+  <div id="historyCommentModal" class="history-comment-modal" hidden>
+    <div class="history-comment-modal__backdrop" aria-hidden="true"></div>
+    <div class="history-comment-modal__dialog" role="dialog" aria-modal="true" aria-labelledby="historyCommentModalTitle">
+      <div class="history-comment-modal__header">
+        <h3 id="historyCommentModalTitle" class="history-comment-modal__title">Comment</h3>
+        <button type="button" class="history-comment-modal__close" aria-label="Close comment">&times;</button>
+      </div>
+      <div class="history-comment-modal__body"></div>
+    </div>
+  </div>
+
+  <div id="addRelationshipModal" class="rel-modal" hidden>
+    <div class="rel-modal__backdrop" data-rel-close aria-hidden="true"></div>
+    <div class="rel-modal__dialog" role="dialog" aria-modal="true" aria-labelledby="addRelationshipModalTitle">
+      <div class="rel-modal__header">
+        <h3 id="addRelationshipModalTitle" class="rel-modal__title">Add Relationship</h3>
+        <button type="button" class="rel-modal__close" data-rel-close aria-label="Close">&times;</button>
+      </div>
+
+      <div class="rel-modal__body">
+        <div class="rel-field-row">
+          <span class="rel-field-label">Source CI</span>
+          <span id="relSourceCiValue" class="rel-field-value"></span>
+        </div>
+
+        <div class="rel-accordion">
+          <button
+            type="button"
+            id="relTypeRow"
+            class="rel-accordion-row"
+            aria-expanded="false"
+            aria-controls="relTypePanel"
+          >
+            <span class="rel-field-label">Relationship Type</span>
+            <span class="rel-accordion-row__right">
+              <span id="relTypeSelectedValue" class="rel-field-value"></span>
+              <i class="fa fa-angle-right rel-accordion-chevron" aria-hidden="true"></i>
+            </span>
+          </button>
+          <div id="relTypePanel" class="rel-type-panel" hidden>
+            <div class="rel-type-table-wrap">
+              <table class="rel-type-table" aria-label="Relationship types">
+                <thead>
+                  <tr>
+                    <th>Relationship Type</th>
+                    <th>Reverse Relationship</th>
+                  </tr>
+                </thead>
+                <tbody id="relTypeTableBody"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <div class="rel-accordion">
+          <button
+            type="button"
+            id="relDestRow"
+            class="rel-accordion-row rel-accordion-row--disabled"
+            aria-expanded="false"
+            aria-controls="relDestPanel"
+            disabled
+          >
+            <span id="relDestLabel" class="rel-field-label">Destination CIs</span>
+            <i class="fa fa-angle-down rel-accordion-chevron" aria-hidden="true"></i>
+          </button>
+          <div id="relDestPanel" class="rel-dest-panel" hidden>
+            <div class="rel-dest-toolbar">
+              <div class="rel-dest-filter rel-dest-filter--stacked">
+                <label class="rel-dest-filter__field" for="relTypeFilterSelect">
+                  <span class="rel-dest-filter__field-label">Type</span>
+                  <div class="rel-dest-select-wrap rel-dest-select-wrap--type">
+                    <select id="relTypeFilterSelect" class="rel-dest-filter__select" aria-label="Filter by Type">
+                      <option value="">All</option>
+                    </select>
+                  </div>
+                </label>
+                <label class="rel-dest-filter__field" for="relCategoryFilterSelect">
+                  <span class="rel-dest-filter__field-label">Category</span>
+                  <div class="rel-dest-select-wrap">
+                    <select id="relCategoryFilterSelect" class="rel-dest-filter__select" aria-label="Filter by Category">
+                      <option value="">All</option>
+                    </select>
+                  </div>
+                </label>
+              </div>
+            </div>
+            <div id="relDestList" class="rel-dest-list"></div>
+          </div>
+          <p id="relDestHint" class="rel-dest-hint">Select a Relationship Type to display Destination CIs</p>
+        </div>
+      </div>
+
+      <div class="rel-modal__footer">
+        <button type="button" id="relCancelBtn" class="rel-modal__btn qaf-btn qaf-cs-theme-btn qaf-cs-theme-btn--secondary" data-rel-close>Cancel</button>
+        <button type="button" id="relAddBtn" class="rel-modal__btn qaf-btn qaf-cs-theme-btn qaf-cs-theme-btn--primary" disabled>Add</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://appai.quickappflow.com/Attachment/downloadfile?fileUrl=Pages1%2Fbundle_3d72dd60-52af-455a-ba4f-5cc7bd4b2be4.js"></script>
+  <script src="https://appai.quickappflow.com/Attachment/downloadfile?fileUrl=Pages1%2Flibrary_58d79208-4260-4ec4-b157-ebd1f81bc6b5.js"></script>
+  <script src="https://appai.quickappflow.com/Attachment/downloadfile?fileUrl=Pages1%2FAsset_nav_dock_46b49aa9-72cf-4b04-a3f4-392112cf6e9c.js"></script>
+  <script src="https://appai.quickappflow.com/Attachment/downloadfile?fileUrl=Pages1%2Fasset-serial-details_b0371156-3da7-49db-8fb7-f2c2d5bd410f.js" defer></script>
+</body>
+</html>

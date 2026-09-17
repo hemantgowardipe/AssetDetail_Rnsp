@@ -85,6 +85,7 @@
     repositoryName: "EAsset Allocation",
     repositoryObjectKey: "EAsset_Allocation"
   };
+  const ASSET_DETAILS_SUMMARY_RNSP_NAME = "ASSET_DETAILS_SUMMARY";
   const TICKETS_RNSP_NAME = "ASSET_TKT_REC_SMRY";
   const DEPENDENCY_RNSP_NAME = "Asset_Dependency";
   const ADD_RELATIONSHIP_TYPE_RNSP_NAME = "Asset_Dependency_Add_Relationship";
@@ -3070,6 +3071,24 @@
     }
   }
 
+  /**
+   * Fetches the Summary tab's asset record from {base_url}/api/rnsp
+   * (Name: "ASSET_DETAILS_SUMMARY"), replacing the former
+   * GetRecordsForFields lookup against EAsset_Master for this tab.
+   *
+   * The SQL behind this RNSP already returns only the columns the Summary
+   * tab needs, with lookup labels resolved (no "GUID;#" prefix) and
+   * AssetManager / AssignedTo pre-combined into their final display names,
+   * so the row is used as-is with no extra client-side parsing.
+   */
+  async function fetchAssetDetailsSummary(recordId, signal) {
+    const id = String(recordId || "").trim();
+    if (!id) return null;
+    const rows = await fetchRnspRows(ASSET_DETAILS_SUMMARY_RNSP_NAME, { RecordID: id }, signal);
+    const row = Array.isArray(rows) ? rows[0] : null;
+    return row ? flattenRecord(row) : null;
+  }
+
   async function fetchAssetTicketsSummary(assetRecordId, signal) {
     const base = getRnspBaseUrl();
     if (!base) return [];
@@ -4858,9 +4877,7 @@
     if (!recordId) return details;
     try {
       const objectMeta = await fetchAssetMasterObjectMeta();
-      const sections = getSummarySectionsFromObject(objectMeta);
-      const fieldList = getSummaryFieldListFromSections(sections);
-      const flat = await fetchAssetMasterRecord(recordId, fieldList);
+      const flat = await fetchAssetDetailsSummary(recordId);
       if (!flat) return { ...details, objectMeta };
       const serialNumber =
         getSummaryValue(flat, "SerialNumber") ||

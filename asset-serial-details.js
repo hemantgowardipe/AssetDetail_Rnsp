@@ -86,6 +86,7 @@
     repositoryObjectKey: "EAsset_Allocation"
   };
   const ASSET_DETAILS_SUMMARY_RNSP_NAME = "ASSET_DETAILS_SUMMARY";
+  const ASSET_DETAILS_AUDIT_LOG_RNSP_NAME = "ASSET_DETAILS_AUDIT_LOG";
   const TICKETS_RNSP_NAME = "ASSET_TKT_REC_SMRY";
   const DEPENDENCY_RNSP_NAME = "Asset_Dependency";
   const ADD_RELATIONSHIP_TYPE_RNSP_NAME = "Asset_Dependency_Add_Relationship";
@@ -2646,15 +2647,8 @@
   }
 
   async function fetchRepositoryHistoryRows(repoConfig, details, signal) {
-    const payload = await apiGetItems(
-      repoConfig.repositoryObjectKey,
-      ["Asset", "Employees", "ActionDate", "Status", "Comments"],
-      buildAssetHistoryWhereClause(details.recordId),
-      { pageSize: 100000, pageNumber: 1, isAscending: true },
-      signal
-    );
-    const filteredRows = normalizeRecords(payload).map((row) => flattenRecord(row));
-    await ensureEmployeeDirectoryForAllocation(filteredRows, signal);
+    const rawRows = await fetchAssetAuditLogRows(details.recordId, signal);
+    const filteredRows = rawRows.map((row) => flattenRecord(row));
     const mappedRows = filteredRows.map((row) => mapHistoryRow(row, details));
     const columns = buildDynamicColumnsFromRows(
       mappedRows,
@@ -3087,6 +3081,25 @@
     const rows = await fetchRnspRows(ASSET_DETAILS_SUMMARY_RNSP_NAME, { RecordID: id }, signal);
     const row = Array.isArray(rows) ? rows[0] : null;
     return row ? flattenRecord(row) : null;
+  }
+
+  /**
+   * Fetches the Audit Log tab's rows from {base_url}/api/rnsp
+   * (Name: "ASSET_DETAILS_AUDIT_LOG"), replacing the former
+   * GetRecordsForFields lookup against EAsset_History for this tab.
+   *
+   * allBatches: true because a long-lived asset's history can span more
+   * rows than a single RNSP batch, same as the Destination CI lookup below.
+   * The SQL behind this RNSP already resolves Employees to a display name,
+   * so the row is used as-is with no extra client-side employee lookup.
+   */
+  async function fetchAssetAuditLogRows(recordId, signal) {
+    const id = String(recordId || "").trim();
+    if (!id) return [];
+    const rows = await fetchRnspRows(ASSET_DETAILS_AUDIT_LOG_RNSP_NAME, { RecordID: id }, signal, {
+      allBatches: true
+    });
+    return Array.isArray(rows) ? rows : [];
   }
 
   async function fetchAssetTicketsSummary(assetRecordId, signal) {

@@ -87,6 +87,7 @@
   };
   const ASSET_DETAILS_SUMMARY_RNSP_NAME = "ASSET_DETAILS_SUMMARY";
   const ASSET_DETAILS_AUDIT_LOG_RNSP_NAME = "ASSET_DETAILS_AUDIT_LOG";
+  const ASSET_DETAILS_OTHER_DETAILS_RNSP_NAME = "ASSET_DETAILS_OTHER_DETAILS_TAB";
   const TICKETS_RNSP_NAME = "ASSET_TKT_REC_SMRY";
   const DEPENDENCY_RNSP_NAME = "Asset_Dependency";
   const ADD_RELATIONSHIP_TYPE_RNSP_NAME = "Asset_Dependency_Add_Relationship";
@@ -1940,7 +1941,17 @@
       "createddate",
       "lastmodifieddate",
       "lastmodifiedby",
-      "createdby"
+      "createdby",
+      "created by id",
+      "createdbyid",
+      "created by guid",
+      "createdbyguid",
+      "last modified by id",
+      "lastmodifiedbyid",
+      "last modified by guid",
+      "lastmodifiedbyguid",
+      "wf instance id",
+      "wfinstanceid"
     ]);
     const labelToken = normalizeFieldToken(label);
     const nameToken = normalizeFieldToken(internalName);
@@ -2296,6 +2307,145 @@
     });
   }
 
+  /**
+   * Fetches the Other Details tab's rows from {base_url}/api/rnsp
+   * (Name: "ASSET_DETAILS_OTHER_DETAILS_TAB"), replacing the former
+   * Category/SubCategory → OSettings → per-child-object GetRecordsForFields
+   * chain in loadOtherDetails/loadOtherDetailSectionForObject below.
+   *
+   * The workflow already resolves EAsset_Master.RecordID = Child.ParentRecordID
+   * server-side and returns one row per child record, so the frontend makes
+   * no further lookups per repository (Computer, Desktop_Hardware,
+   * Network_Adapter, Software, Network) — it only groups/parses what comes back.
+   */
+  async function fetchAssetOtherDetailsRows(recordId, signal) {
+    const id = String(recordId || "").trim();
+    if (!id) return [];
+    const rows = await fetchRnspRows(ASSET_DETAILS_OTHER_DETAILS_RNSP_NAME, { RecordID: id }, signal, {
+      allBatches: true
+    });
+    return Array.isArray(rows) ? rows : [];
+  }
+
+  function parseOtherDetailChildData(raw) {
+    if (raw == null) return null;
+    if (typeof raw === "object") return raw;
+    const text = String(raw).trim();
+    if (!text) return null;
+    try {
+      const parsed = JSON.parse(text);
+      return parsed && typeof parsed === "object" ? parsed : null;
+    } catch (_error) {
+      // One malformed ChildData value should not break the rest of the tab.
+      return null;
+    }
+  }
+
+  function toOtherDetailChildDataRow(childData) {
+    const ignored = new Set([
+      "RecordID",
+      "RecordId",
+      "ObjectID",
+      "ObjectId",
+      "ID",
+      "id",
+      "ParentRecordID",
+      "ParentRecordId",
+      "ChildRecordID",
+      "ChildRecordId",
+      "ChildParentRecordID",
+      "ChildParentRecordId",
+      "CreatedBy",
+      "LastModifiedBy",
+      "CreatedDate",
+      "LastModifiedDate",
+      "CreatedByID",
+      "CreatedById",
+      "CreatedByGUID",
+      "CreatedByGuid",
+      "LastModifiedByID",
+      "LastModifiedById",
+      "LastModifiedByGUID",
+      "LastModifiedByGuid",
+      "WFInstanceID",
+      "WFInstanceId"
+    ]);
+    const out = {};
+    Object.keys(childData || {})
+      .filter((key) => !ignored.has(key))
+      .forEach((key) => {
+        const value = childData[key];
+        // Skip nested objects/arrays (not a flat, displayable field) but keep the
+        // key even when its value is empty/null, so the column still appears —
+        // matches the old metadata-driven behavior of showing every real field.
+        if (value != null && typeof value === "object") return;
+        const label = normalizeFieldLabel(key);
+        if (!label || shouldHideOtherDetailField(label, key)) return;
+        // Keep the field's null-ness intact rather than coercing it to "" —
+        // the workflow can legitimately return every field as null when
+        // there's no related child record, and that's still real, keepable
+        // data (not a missing/omitted field). Downstream rendering already
+        // treats null the same as empty text, so the display is unaffected.
+        out[label] = value == null ? null : parseLookupLabel(value);
+      });
+    return out;
+  }
+
+  // Fixed, known set of child repositories the ASSET_DETAILS_OTHER_DETAILS_TAB
+  // workflow can return data from (see workflow contract). Every one of these
+  // gets its own section — populated when the response has rows for it,
+  // shown empty ("No Records Found") otherwise — matching the previous
+  // behavior of always showing each applicable child table.
+  const OTHER_DETAILS_CHILD_REPOSITORIES = [
+    "Computer",
+    "Desktop_Hardware",
+    "Network_Adapter",
+    "Software",
+    "Network"
+  ];
+
+  function findOtherDetailRepoRows(rowsByRepo, repoName) {
+    if (rowsByRepo.has(repoName)) return rowsByRepo.get(repoName);
+    const token = normalizeFieldToken(repoName);
+    const matchKey = Array.from(rowsByRepo.keys()).find((key) => normalizeFieldToken(key) === token);
+    return matchKey ? rowsByRepo.get(matchKey) : [];
+  }
+
+  function buildOtherDetailSectionsFromRnspRows(rows) {
+    const rowsByRepo = new Map();
+    (Array.isArray(rows) ? rows : []).forEach((row) => {
+      const repoName = String((row && row.ChildRepository) || "").trim();
+      if (!repoName) return;
+      const childData = parseOtherDetailChildData(row && row.ChildData);
+      if (!childData) return;
+      const rowObject = toOtherDetailChildDataRow(childData);
+      if (!Object.keys(rowObject).length) return;
+      if (!rowsByRepo.has(repoName)) rowsByRepo.set(repoName, []);
+      rowsByRepo.get(repoName).push(rowObject);
+    });
+
+    // Show every known repository (fixed order), plus any repository the
+    // response mentions that isn't in the known list, so a backend addition
+    // doesn't silently get dropped.
+    const order = OTHER_DETAILS_CHILD_REPOSITORIES.slice();
+    Array.from(rowsByRepo.keys()).forEach((repoName) => {
+      const token = normalizeFieldToken(repoName);
+      if (!order.some((name) => normalizeFieldToken(name) === token)) order.push(repoName);
+    });
+
+    return order.map((repoName) => {
+      const sectionRows = findOtherDetailRepoRows(rowsByRepo, repoName);
+      const columns = buildDynamicColumnsFromRowKeys(sectionRows);
+      return {
+        title: normalizeFieldLabel(repoName) || repoName,
+        objectMeta: null,
+        columnDefs: columns.map((column) => ({ internalName: column, displayName: column })),
+        columns,
+        rows: sectionRows
+      };
+    });
+  }
+
   async function loadOtherDetails(details) {
     if (!ui.otherDetailContent) return;
     bindOtherDetailGridEvents();
@@ -2305,31 +2455,9 @@
       renderOtherDetailSections([]);
       return;
     }
-
     try {
-      const masterRowsPayload = await apiGetItems(
-        ASSET_MASTER_REPOSITORY,
-        ["RecordID", "Category", "SubCategory", "ObjectID"],
-        buildRecordIdWhereClause(assetRecordId),
-        { pageSize: 1, pageNumber: 1 },
-      );
-      const masterRow = flattenRecord(normalizeRecords(masterRowsPayload)[0] || {});
-      if (!Object.keys(masterRow).length) {
-        renderOtherDetailSections([]);
-        return;
-      }
-      const parentObjectMeta = await apiObjectGet(ASSET_MASTER_REPOSITORY);
-      const mappingValue = parseLookupLabel(masterRow.SubCategory) ? masterRow.SubCategory : masterRow.Category;
-      const mappedObjectNames = resolveMappedObjectsFromOSettings(parentObjectMeta, mappingValue);
-      if (!mappedObjectNames.length) {
-        renderOtherDetailSections([]);
-        return;
-      }
-      const sections = [];
-      for (let i = 0; i < mappedObjectNames.length; i += 1) {
-        const section = await loadOtherDetailSectionForObject(mappedObjectNames[i], assetRecordId).catch(() => null);
-        if (section) sections.push(section);
-      }
+      const rawRows = await fetchAssetOtherDetailsRows(assetRecordId);
+      const sections = buildOtherDetailSectionsFromRnspRows(rawRows);
       renderOtherDetailSections(sections);
     } catch (_error) {
       renderOtherDetailSections([]);

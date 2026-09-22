@@ -4948,26 +4948,7 @@
       return;
     }
 
-    let rows = [];
-    try {
-      const payload = await apiGetItems(
-        ALLOCATION_REPOSITORY.repositoryObjectKey,
-        ALLOCATION_API_FIELD_LIST,
-        buildAssetIdLinkWhereClause(assetRecordId),
-        { pageSize: FILTERED_LIST_PAGE_SIZE, pageNumber: 1 }
-      );
-      const flatRows = normalizeRecords(payload)
-        .map((row) => flattenRecord(row))
-        .filter((row) => fieldContainsRecordId(row, ["AssetID", "Asset"], assetRecordId));
-      await ensureEmployeeDirectoryForAllocation(flatRows);
-      rows = flatRows.map((row, index) => {
-        const mapped = mapAllocationRow(row, details);
-        mapped.__repoIndex = index;
-        return mapped;
-      });
-    } catch (_error) {
-      rows = [];
-    }
+    const rows = [];
 
     rows.forEach((row) => enrichAllocationRowSortValues(row));
     state.allocationRowsRaw = rows;

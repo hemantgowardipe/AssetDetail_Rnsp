@@ -88,6 +88,11 @@
   const ASSET_DETAILS_SUMMARY_RNSP_NAME = "ASSET_DETAILS_SUMMARY";
   const ASSET_DETAILS_AUDIT_LOG_RNSP_NAME = "ASSET_DETAILS_AUDIT_LOG";
   const ASSET_DETAILS_OTHER_DETAILS_RNSP_NAME = "ASSET_DETAILS_OTHER_DETAILS_TAB";
+  // Follows the same ASSET_DETAILS_<SECTION> naming used by the three RNSP
+  // workflows above (Summary/Audit Log/Other Details). Not yet explicitly
+  // confirmed for Allocation — if the actual backend workflow name differs,
+  // this is the only line that needs to change.
+  const ASSET_DETAILS_ALLOCATION_RNSP_NAME = "ASSET_DETAILS_ALLOCATION";
   const TICKETS_RNSP_NAME = "ASSET_TKT_REC_SMRY";
   const DEPENDENCY_RNSP_NAME = "Asset_Dependency";
   const ADD_RELATIONSHIP_TYPE_RNSP_NAME = "Asset_Dependency_Add_Relationship";
@@ -2391,27 +2396,8 @@
     return out;
   }
 
-  // Fixed, known set of child repositories the ASSET_DETAILS_OTHER_DETAILS_TAB
-  // workflow can return data from (see workflow contract). Every one of these
-  // gets its own section — populated when the response has rows for it,
-  // shown empty ("No Records Found") otherwise — matching the previous
-  // behavior of always showing each applicable child table.
-  const OTHER_DETAILS_CHILD_REPOSITORIES = [
-    "Computer",
-    "Desktop_Hardware",
-    "Network_Adapter",
-    "Software",
-    "Network"
-  ];
-
-  function findOtherDetailRepoRows(rowsByRepo, repoName) {
-    if (rowsByRepo.has(repoName)) return rowsByRepo.get(repoName);
-    const token = normalizeFieldToken(repoName);
-    const matchKey = Array.from(rowsByRepo.keys()).find((key) => normalizeFieldToken(key) === token);
-    return matchKey ? rowsByRepo.get(matchKey) : [];
-  }
-
   function buildOtherDetailSectionsFromRnspRows(rows) {
+    const order = [];
     const rowsByRepo = new Map();
     (Array.isArray(rows) ? rows : []).forEach((row) => {
       const repoName = String((row && row.ChildRepository) || "").trim();
@@ -2420,21 +2406,19 @@
       if (!childData) return;
       const rowObject = toOtherDetailChildDataRow(childData);
       if (!Object.keys(rowObject).length) return;
-      if (!rowsByRepo.has(repoName)) rowsByRepo.set(repoName, []);
+      if (!rowsByRepo.has(repoName)) {
+        rowsByRepo.set(repoName, []);
+        order.push(repoName);
+      }
       rowsByRepo.get(repoName).push(rowObject);
     });
 
-    // Show every known repository (fixed order), plus any repository the
-    // response mentions that isn't in the known list, so a backend addition
-    // doesn't silently get dropped.
-    const order = OTHER_DETAILS_CHILD_REPOSITORIES.slice();
-    Array.from(rowsByRepo.keys()).forEach((repoName) => {
-      const token = normalizeFieldToken(repoName);
-      if (!order.some((name) => normalizeFieldToken(name) === token)) order.push(repoName);
-    });
-
+    // Sections come only from repositories actually present in the RNSP
+    // response — no fixed/forced list, no padding in repositories that
+    // weren't returned. If the response has one ChildRepository entry, the
+    // tab shows exactly one section.
     return order.map((repoName) => {
-      const sectionRows = findOtherDetailRepoRows(rowsByRepo, repoName);
+      const sectionRows = rowsByRepo.get(repoName);
       const columns = buildDynamicColumnsFromRowKeys(sectionRows);
       return {
         title: normalizeFieldLabel(repoName) || repoName,
@@ -3225,6 +3209,23 @@
     const id = String(recordId || "").trim();
     if (!id) return [];
     const rows = await fetchRnspRows(ASSET_DETAILS_AUDIT_LOG_RNSP_NAME, { RecordID: id }, signal, {
+      allBatches: true
+    });
+    return Array.isArray(rows) ? rows : [];
+  }
+
+  /**
+   * Fetches the Allocation table's rows from {base_url}/api/rnsp
+   * (Name: "ASSET_DETAILS_ALLOCATION"), replacing the former
+   * GetRecordsForFields lookup against EAsset_Allocation for this table.
+   *
+   * allBatches: true for the same reason as Audit Log — an asset can
+   * accumulate more allocation history than fits one RNSP batch.
+   */
+  async function fetchAssetAllocationRows(recordId, signal) {
+    const id = String(recordId || "").trim();
+    if (!id) return [];
+    const rows = await fetchRnspRows(ASSET_DETAILS_ALLOCATION_RNSP_NAME, { RecordID: id }, signal, {
       allBatches: true
     });
     return Array.isArray(rows) ? rows : [];
@@ -4948,6 +4949,11 @@
       return;
     }
 
+    // No backend call for Allocation right now — deliberately disabled per
+    // request until a confirmed RNSP workflow/contract exists for it.
+    // fetchAssetAllocationRows / ASSET_DETAILS_ALLOCATION_RNSP_NAME are left
+    // in place above, unused, so this can be wired back up in one line once
+    // the real workflow name is confirmed.
     const rows = [];
 
     rows.forEach((row) => enrichAllocationRowSortValues(row));

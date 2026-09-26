@@ -3017,7 +3017,7 @@
     const historyDataset = await fetchRepositoryHistoryRows(HISTORY_REPOSITORY, details).catch(
       () => ({ rows: [], columns: HISTORY_DEFAULT_COLUMNS })
     );
-    const rows = Array.isArray(historyDataset.rows) ? historyDataset.rows.slice().reverse() : [];
+    const rows = Array.isArray(historyDataset.rows) ? historyDataset.rows.slice() : [];
     state.historyRowsRaw = rows;
     renderHistoryGrid({ rows, columns: historyDataset.columns });
   }

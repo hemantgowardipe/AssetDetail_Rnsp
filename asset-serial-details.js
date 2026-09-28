@@ -4196,6 +4196,7 @@
       "End Date"
     ]) || "";
     out.Remarks = getAllocationValueLoose(flatRow, ["Remarks", "Remark", "Comments", "Comment"]) || "";
+    out.Acknowledgement = getAllocationValueLoose(flatRow, ["Acknowledgement", "Acknowledgment"]) || "";
     out.CreatedBy = getAllocationValueLoose(flatRow, ["CreatedByName", "CreatedBy", "Created By"]) || "";
     const ignored = new Set([
       "recordid",
@@ -4949,12 +4950,19 @@
       return;
     }
 
-    // No backend call for Allocation right now — deliberately disabled per
-    // request until a confirmed RNSP workflow/contract exists for it.
-    // fetchAssetAllocationRows / ASSET_DETAILS_ALLOCATION_RNSP_NAME are left
-    // in place above, unused, so this can be wired back up in one line once
-    // the real workflow name is confirmed.
-    const rows = [];
+    // AssetAllocation comes embedded in the ASSET_DETAILS_SUMMARY response
+    // (details.asset.AssetAllocation) — no separate API call for this table.
+    const rawRows = getAllocationRows(details.asset);
+    let rows = [];
+    if (rawRows.length) {
+      const flatRows = rawRows.map((row) => flattenRecord(row));
+      await ensureEmployeeDirectoryForAllocation(flatRows).catch(() => {});
+      rows = flatRows.map((row, index) => {
+        const mapped = mapAllocationRow(row, details);
+        mapped.__repoIndex = index;
+        return mapped;
+      });
+    }
 
     rows.forEach((row) => enrichAllocationRowSortValues(row));
     state.allocationRowsRaw = rows;

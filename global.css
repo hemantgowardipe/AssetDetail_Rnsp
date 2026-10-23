@@ -607,7 +607,7 @@ body:not(.qaf-navdock-expanded) .qaf-navdock:hover .qaf-navdock__label {
   border: 1px solid var(--color-border-strong);
   border-radius: var(--radius-sm);
   box-shadow: var(--shadow-none);
-  padding: var(--space-6);
+  padding: var(--space-5);
 }
 
 .card-title,
@@ -858,6 +858,214 @@ table thead th .gt-col-resizer.is-resizing::after {
 body.is-column-resizing,
 body.is-column-resizing * {
   cursor: col-resize !important;
+}
+
+/*
+ * SECTION: Reusable Loader (qaf-loader)
+ *
+ * The one loading indicator for every page and every card or grid in it: three
+ * dots pulsing in turn, with no "Loading..." text. It is the Lease Asset
+ * Dashboard's dot pulse (formerly .dash-loading), moved here so every page
+ * shares one look and one place to change it.
+ *
+ * Write it with QafLibrary.Loader (library.js) rather than by hand. Markup that
+ * must be on screen before any script runs (a grid's initial tbody) uses the
+ * same structure the library writes:
+ *
+ *   <div class="qaf-loader" role="status" aria-label="Loading">
+ *     <span class="qaf-loader__dot" aria-hidden="true"></span>
+ *     <span class="qaf-loader__dot" aria-hidden="true"></span>
+ *     <span class="qaf-loader__dot" aria-hidden="true"></span>
+ *   </div>
+ *
+ * Placements (modifier on .qaf-loader):
+ *   (none)    Card / panel body: centred across the top of the area.
+ *   --kpi     KPI card: written into the value slot, but the dots sit at the
+ *             centre of the whole card. The card carries .qaf-loader-kpi-host
+ *             (QafLibrary.Loader.showKpi adds it).
+ *   --grid    Table body: one full-width row directly under the header row,
+ *             centred - tr.qaf-loader-row > td.qaf-loader-cell.
+ *   --inline  In a line of text or inside a small control.
+ */
+.qaf-loader {
+  --qaf-loader-dot: 6px;
+  --qaf-loader-gap: 5px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--qaf-loader-gap);
+  width: 100%;
+  min-height: 48px;
+  padding: 12px 0;
+  box-sizing: border-box;
+}
+
+.qaf-loader__dot {
+  display: inline-block;
+  flex: none;
+  width: var(--qaf-loader-dot);
+  height: var(--qaf-loader-dot);
+  border-radius: 50%;
+  background: var(--color-text-muted);
+  animation: qaf-loader-pulse 1.2s ease-in-out infinite;
+}
+
+.qaf-loader__dot:nth-child(2) {
+  animation-delay: 0.2s;
+}
+
+.qaf-loader__dot:nth-child(3) {
+  animation-delay: 0.4s;
+}
+
+@keyframes qaf-loader-pulse {
+  0%, 80%, 100% {
+    transform: scale(0.75);
+    opacity: 0.4;
+  }
+  40% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+/*
+ * KPI: the value slot sits low in the card, under the label/icon row, so the
+ * dots are lifted out of it and centred on the card itself. The loader stays
+ * inline in the slot and its zero-width ::before keeps one line of the slot's
+ * own height, so the card does not change size when the number lands.
+ */
+.qaf-loader-kpi-host {
+  position: relative;
+}
+
+.qaf-loader--kpi {
+  display: inline;
+  width: auto;
+  min-height: 0;
+  padding: 0;
+}
+
+.qaf-loader--kpi::before {
+  content: "\200B";
+}
+
+.qaf-loader--kpi > .qaf-loader__dot {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  margin-top: calc(var(--qaf-loader-dot) / -2);
+  margin-left: calc(var(--qaf-loader-dot) / -2);
+}
+
+.qaf-loader--kpi > .qaf-loader__dot:nth-child(1) {
+  margin-left: calc(var(--qaf-loader-dot) * -1.5 - var(--qaf-loader-gap));
+}
+
+.qaf-loader--kpi > .qaf-loader__dot:nth-child(3) {
+  margin-left: calc(var(--qaf-loader-dot) / 2 + var(--qaf-loader-gap));
+}
+
+.qaf-loader--inline {
+  display: inline-flex;
+  width: auto;
+  min-height: 0;
+  padding: 0;
+  vertical-align: middle;
+}
+
+/*
+ * Chart: the dots sit centred over the chart's area and veil what is under it
+ * (a canvas has no content to replace, and a reload would show the old chart).
+ * The host carries .qaf-loader-overlay-host (QafLibrary.Loader.showOverlay adds
+ * it), and the overlay is removed again by Loader.hideOverlay.
+ */
+.qaf-loader-overlay-host {
+  position: relative;
+}
+
+.qaf-loader-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255, 255, 255, 0.8);
+  border-radius: var(--radius-sm);
+}
+
+.qaf-loader-overlay--clear {
+  background: transparent;
+  pointer-events: none;
+}
+
+.qaf-loader-overlay > .qaf-loader {
+  min-height: 0;
+  padding: 0;
+}
+
+/*
+ * SECTION: Reusable Empty State (qaf-empty)
+ *
+ * The one "No Data Found" message for every card and grid, shown both when a
+ * request returns nothing and when it fails. It uses the loader's box and the
+ * loader's placements, so nothing moves when one replaces the other. Write it
+ * with QafLibrary.EmptyState (library.js); markup that must be on screen before
+ * any script runs uses the same structure:
+ *
+ *   <div class="qaf-empty" role="status">No Data Found</div>
+ *
+ * Placements (modifier on .qaf-empty), as for .qaf-loader:
+ *   (none)  Card / panel body: centred across the top of the area.
+ *   --grid  Table body: one full-width row directly under the header row,
+ *           centred - tr.qaf-empty-row > td.qaf-empty-cell.
+ */
+.qaf-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  min-height: 48px;
+  padding: 12px 0;
+  box-sizing: border-box;
+  color: var(--color-text-muted);
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-regular);
+  line-height: 1.35;
+  text-align: center;
+}
+
+/*
+ * Grid rows (loader and empty state): the first and only body row, directly
+ * under the header row, as tall as a data row.
+ *
+ * A grid wider than its scroll box would centre the content across the whole
+ * row, off to the right or off screen. So the content box is a zero-width
+ * anchor, sticky with both insets at the middle of the scroll box (sticky
+ * insets resolve against the scrollport), and the dots or text overflow it
+ * evenly on both sides: centred in the visible width at any column width or
+ * horizontal scroll. The cell must not clip (it would become the sticky's
+ * scrollport), so its overflow beats the grid ellipsis rule and any page's.
+ */
+tr.qaf-loader-row > td.qaf-loader-cell,
+tr.qaf-empty-row > td.qaf-empty-cell {
+  text-align: center;
+  overflow: visible !important;
+}
+
+.qaf-loader--grid,
+.qaf-empty--grid {
+  position: sticky;
+  left: 50%;
+  right: 50%;
+  width: 0;
+  min-height: 1.35em; /* one line of the message: the two rows match exactly */
+  margin-inline: auto;
+  padding: 0;
+  font-size: var(--font-size-md);
+  line-height: 1.35;
+  white-space: nowrap;
 }
 
 /*
@@ -2210,4 +2418,31 @@ textarea:focus {
 }
 .page-title {
     color: black !important;
+}
+
+/* Popup close (x) button — same as TeamSLA's popup close (.ra-details-close):
+   24px round, bordered like the filter inputs, black x, no hover change.
+   Scoped to the popup close button only. */
+.filter-funnel-popup .filter-funnel-popup__close,
+.filter-funnel-popup .filter-funnel-popup__close:hover,
+.filter-funnel-popup .filter-funnel-popup__close:focus,
+.filter-funnel-popup .filter-funnel-popup__close:focus-visible,
+.filter-funnel-popup .filter-funnel-popup__close:active {
+    width: 24px;
+    height: 24px;
+    min-width: 24px;
+    padding: 0;
+    box-sizing: border-box;
+    border: 1px solid var(--color-border-strong);
+    border-radius: 24px;
+    background: transparent;
+    color: #000;
+    box-shadow: none;
+    outline: none;
+    font-size: 18px;
+    line-height: 1;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
 }

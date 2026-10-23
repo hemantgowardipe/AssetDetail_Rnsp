@@ -1,5 +1,3 @@
-@import url("https://fonts.googleapis.com/css2?family=Poppins:wght@400;600&display=swap");
-
 :root {
   --bg: #FAFAFA;
   /* Uniform grid sizing: one row height shared by every section grid and table */
@@ -171,11 +169,17 @@ body:not(.qaf-navdock-expanded) .qaf-navdock:hover .qaf-navdock__label {
   box-shadow: none;
 }
 
+/* Back row and tab row sit close together: a 4px gap (was 12px), the tab
+   strip's own 10px top padding (tab_styling.css) dropped inside this header
+   only, and the Back link's line-height kept at normal - it carries the
+   mat-button class, and in the portal Angular Material's 36px line-height
+   otherwise made the Back row much taller. The tab strip itself, its 4px
+   top padding and the tab buttons are unchanged. */
 .asset-serial-header {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  gap: 12px;
+  gap: 4px;
   margin-bottom: 12px;
 }
 
@@ -183,44 +187,48 @@ body:not(.qaf-navdock-expanded) .qaf-navdock:hover .qaf-navdock__label {
   margin-bottom: 0;
 }
 
+#assetSerialDetailsAppHost .asset-serial-header .back-btn__text.mat-button {
+  line-height: normal;
+}
+
+/* The tab strip's line runs the full width of the header (the header is a
+   left-aligned column, which would otherwise shrink the strip to its tabs). */
+.asset-serial-header .settings-tabs-header {
+  align-self: stretch;
+  width: 100%;
+  box-sizing: border-box;
+  padding-top: 0;
+}
+
 .back-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
   margin-bottom: 10px;
+}
+
+#assetSerialDetailsAppHost .mat-button {
+  font-family: Poppins !important;
+  display: inline-block;
+  cursor: pointer;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+  white-space: nowrap;
+  text-decoration: none;
+  margin: 0;
   padding: 0;
   border: none;
-  border-radius: 0;
   background: transparent;
-  color: #1f2937;
-  font-size: 12px;
-  font-family: inherit;
-  cursor: pointer;
+  font-size: 14px;
+  font-weight: 500;
+  color: inherit;
 }
 
-.back-btn:hover {
+#assetSerialDetailsAppHost .mat-button:hover,
+#assetSerialDetailsAppHost .mat-button:focus-visible {
+  text-decoration: none;
   background: transparent;
-  border-color: transparent;
 }
 
-.back-btn .fa,
-.back-btn .fa::before {
-  font-family: FontAwesome !important;
-  font-size: 12px;
-}
-
-.back-btn__text {
-  line-height: 1.2;
-  display: inline-flex;
-  align-items: center;
+.back-btn__text .mat-button-wrapper {
   color: #1f2937;
-  text-decoration: none;
-  cursor: pointer;
-}
-
-.back-btn__text:hover,
-.back-btn__text:focus-visible {
-  text-decoration: none;
 }
 
 #assetSerialDetailsAppHost .asset-tabs {
@@ -364,9 +372,11 @@ body:not(.qaf-navdock-expanded) .qaf-navdock:hover .qaf-navdock__label {
   max-height: var(--asd-table-max-h);
   overflow-x: auto;
   overflow-y: auto;
-  /* Reserve the vertical scrollbar lane even before it is needed,
-     so the table width never changes when rows exceed 5. */
-  scrollbar-gutter: stable;
+  /* No reserved lane: the vertical scrollbar's 10px (see --asd-scrollbar-size)
+     exists only while the rows actually overflow, so a table with 5 or fewer
+     rows runs flush to the right border. The scrollbar is always laid out
+     (transparent until hover), so hovering never shifts the content. */
+  scrollbar-gutter: auto;
   border: 1px solid #e5e7eb;
   border-radius: 10px;
   background: #ffffff;
@@ -380,7 +390,6 @@ body:not(.qaf-navdock-expanded) .qaf-navdock:hover .qaf-navdock__label {
  */
 .allocation-table-wrap,
 .tickets-table-wrap,
-.history-log-table-wrap,
 .other-detail-table-wrap,
 .detail-section-grid {
   scrollbar-width: thin;
@@ -389,7 +398,6 @@ body:not(.qaf-navdock-expanded) .qaf-navdock:hover .qaf-navdock__label {
 
 .allocation-table-wrap:hover,
 .tickets-table-wrap:hover,
-.history-log-table-wrap:hover,
 .other-detail-table-wrap:hover,
 .detail-section-grid:hover {
   scrollbar-color: #c7d2e1 #f8fafc;
@@ -397,7 +405,6 @@ body:not(.qaf-navdock-expanded) .qaf-navdock:hover .qaf-navdock__label {
 
 .allocation-table-wrap::-webkit-scrollbar,
 .tickets-table-wrap::-webkit-scrollbar,
-.history-log-table-wrap::-webkit-scrollbar,
 .other-detail-table-wrap::-webkit-scrollbar,
 .detail-section-grid::-webkit-scrollbar {
   width: var(--asd-scrollbar-size);
@@ -406,7 +413,6 @@ body:not(.qaf-navdock-expanded) .qaf-navdock:hover .qaf-navdock__label {
 
 .allocation-table-wrap::-webkit-scrollbar-track,
 .tickets-table-wrap::-webkit-scrollbar-track,
-.history-log-table-wrap::-webkit-scrollbar-track,
 .other-detail-table-wrap::-webkit-scrollbar-track,
 .detail-section-grid::-webkit-scrollbar-track {
   background: transparent;
@@ -415,7 +421,6 @@ body:not(.qaf-navdock-expanded) .qaf-navdock:hover .qaf-navdock__label {
 
 .allocation-table-wrap::-webkit-scrollbar-thumb,
 .tickets-table-wrap::-webkit-scrollbar-thumb,
-.history-log-table-wrap::-webkit-scrollbar-thumb,
 .other-detail-table-wrap::-webkit-scrollbar-thumb,
 .detail-section-grid::-webkit-scrollbar-thumb {
   background: transparent;
@@ -424,7 +429,6 @@ body:not(.qaf-navdock-expanded) .qaf-navdock:hover .qaf-navdock__label {
 
 .allocation-table-wrap:hover::-webkit-scrollbar-track,
 .tickets-table-wrap:hover::-webkit-scrollbar-track,
-.history-log-table-wrap:hover::-webkit-scrollbar-track,
 .other-detail-table-wrap:hover::-webkit-scrollbar-track,
 .detail-section-grid:hover::-webkit-scrollbar-track {
   background: #f8fafc;
@@ -432,7 +436,6 @@ body:not(.qaf-navdock-expanded) .qaf-navdock:hover .qaf-navdock__label {
 
 .allocation-table-wrap:hover::-webkit-scrollbar-thumb,
 .tickets-table-wrap:hover::-webkit-scrollbar-thumb,
-.history-log-table-wrap:hover::-webkit-scrollbar-thumb,
 .other-detail-table-wrap:hover::-webkit-scrollbar-thumb,
 .detail-section-grid:hover::-webkit-scrollbar-thumb {
   background: linear-gradient(180deg, #d7e0ec 0%, #b8c6da 100%);
@@ -441,9 +444,32 @@ body:not(.qaf-navdock-expanded) .qaf-navdock:hover .qaf-navdock__label {
 
 .allocation-table-wrap::-webkit-scrollbar-corner,
 .tickets-table-wrap::-webkit-scrollbar-corner,
-.history-log-table-wrap::-webkit-scrollbar-corner,
 .other-detail-table-wrap::-webkit-scrollbar-corner,
 .detail-section-grid::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+/* Audit Log grid box: the Asset Inventory table view's scrollbars. The look
+   (10px horizontal and vertical bars, thumb shown on hover only, transparent
+   track) comes from global.css's .qaf-scrollbar-10, which the wrap carries
+   exactly like Inventory's .asset-table-wrap. As there, the end arrows are
+   removed and the vertical scrollbar's lane stays reserved
+   (scrollbar-gutter: stable), so the columns - fitted to the wrap's
+   clientWidth by asset-serial-details.js - never shift or run under it when
+   the rows start to overflow on a resize or zoom. */
+#assetSerialDetailsAppHost .history-log-table-wrap {
+  overflow-x: auto;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+}
+
+#assetSerialDetailsAppHost .history-log-table-wrap::-webkit-scrollbar-button {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
+#assetSerialDetailsAppHost .history-log-table-wrap::-webkit-scrollbar-corner {
   background: transparent;
 }
 
@@ -642,6 +668,51 @@ body:not(.qaf-navdock-expanded) .qaf-navdock:hover .qaf-navdock__label {
   color: #374151;
 }
 
+/* Message row of the Other Details / Audit Log grids ("No Records Found",
+   "Loading..."): the cell spans the whole (possibly very wide) table, so the
+   text lives in an inner block that is sticky to the scroll box's left edge and
+   exactly as wide as its visible area (--asd-table-visible-w, set by
+   asset-serial-details.js) - it is centred in what the user sees, whatever the
+   columns. The cell must not clip (that would break the sticky block) and
+   carries no padding of its own (the block has it). */
+.other-detail-table td.asd-table-message,
+.history-log-table td.asd-table-message,
+.allocation-table td.asd-table-message,
+.tickets-table td.asd-table-message {
+  padding: 0 !important;
+  overflow: visible !important;
+  text-overflow: clip !important;
+}
+
+/* The last column's resize handle stays inside the table's right edge. Its
+   hit-zone straddles the column boundary, so on the last column half of it hung
+   past the table and gave every table that fits its box a few px of pointless
+   horizontal scroll (and a scrollbar band under it). */
+:where(#assetSerialDetailsAppHost) .allocation-table thead th:last-child .gt-col-resizer,
+:where(#assetSerialDetailsAppHost) .tickets-table thead th:last-child .gt-col-resizer,
+:where(#assetSerialDetailsAppHost) .history-log-table thead th:last-child .gt-col-resizer,
+:where(#assetSerialDetailsAppHost) .other-detail-table thead th:last-child .gt-col-resizer {
+  right: 0;
+}
+
+.asd-table-message__text {
+  position: sticky;
+  left: 0;
+  box-sizing: border-box;
+  width: var(--asd-table-visible-w, 100%);
+  padding: var(--space-4, 10px);
+  text-align: center;
+  white-space: normal;
+  color: #374151;
+}
+
+/* Dots in a message row: same row height as the text they replace. */
+.asd-table-message__text > .qaf-loader {
+  min-height: 18px;
+  min-height: 1lh;
+  padding: 0;
+}
+
 .allocation-loading-head {
   font-weight: 400;
   color: #64748b;
@@ -743,10 +814,43 @@ body:not(.qaf-navdock-expanded) .qaf-navdock:hover .qaf-navdock__label {
 
 :where(#assetSerialDetailsAppHost) .allocation-table .allocation-remarks-cell__text {
   display: block;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  /* Full remark, wrapped to the column width - no "..." (see the
+     "Table values: no ellipsis" rules below). */
+  overflow: visible;
+  text-overflow: clip;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
   cursor: default;
+}
+
+/* ---- Table values: no ellipsis ------------------------------------------
+   Every value in the Asset Allocation, Tickets, Audit Log and Other Details
+   grids is shown in full: instead of being cut to one line ending in "...",
+   it wraps inside its column, so a narrower column (smaller screen, zoom, a
+   dragged column) simply makes the row taller. A long word or ID with no
+   spaces breaks too, so text never spills into the next column. This beats
+   both this page's own single-line cell rule above and the shared grid's
+   body-cell ellipsis in global.css (by ID weight; that file is not touched).
+   The row-actions cell keeps its own layout (its menu must not be clipped). */
+#assetSerialDetailsAppHost .allocation-table > tbody > tr > td:not(.row-actions),
+#assetSerialDetailsAppHost .tickets-table > tbody > tr > td,
+#assetSerialDetailsAppHost .history-log-table > tbody > tr > td,
+#assetSerialDetailsAppHost .other-detail-table > tbody > tr > td {
+  white-space: normal !important;
+  overflow: visible !important;
+  text-overflow: clip !important;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+/* Inner blocks of a cell (date / time halves, badges, links) wrap the same way. */
+#assetSerialDetailsAppHost .allocation-table > tbody > tr > td:not(.row-actions) *,
+#assetSerialDetailsAppHost .tickets-table > tbody > tr > td *,
+#assetSerialDetailsAppHost .history-log-table > tbody > tr > td *,
+#assetSerialDetailsAppHost .other-detail-table > tbody > tr > td * {
+  text-overflow: clip;
+  overflow-wrap: anywhere;
 }
 
 :where(#assetSerialDetailsAppHost) .allocation-remarks-tooltip-float {
@@ -1090,7 +1194,9 @@ body.history-comment-modal-open {
 }
 
 /* ------------------------------------------------------------------
-   Asset Dependency tab
+   Asset Relationship tab
+   Top-down tree: root on top, children laid out horizontally below,
+   large sibling sets wrapped into rows.
 ------------------------------------------------------------------ */
 
 .dependency-section-head {
@@ -1099,57 +1205,6 @@ body.history-comment-modal-open {
   justify-content: space-between;
   gap: 12px;
   flex-wrap: wrap;
-}
-
-.dependency-view-buttons {
-  display: flex;
-  align-items: center;
-  border: 1px solid #d1d5db;
-  border-radius: 6px;
-  overflow: hidden;
-  background: #fff;
-}
-
-.dependency-view-buttons .dep-view-btn {
-  width: 36px;
-  height: 32px;
-  border: 0;
-  border-right: 1px solid #e5e7eb;
-  background: #fff;
-  color: #4b5563;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-  transition: background 0.15s ease, color 0.15s ease;
-}
-
-.dependency-view-buttons .dep-view-btn:last-child {
-  border-right: 0;
-}
-
-.dependency-view-buttons .dep-view-btn:hover {
-  background: #f3f4f6;
-  color: #2563eb;
-}
-
-.dependency-view-buttons .dep-view-btn.active {
-  background: #edf4ff;
-  color: #2874df;
-}
-
-.dep-view-icon {
-  width: 20px;
-  height: 20px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.dep-view-icon svg {
-  width: 18px;
-  height: 18px;
-  display: block;
 }
 
 .dependency-toolbar {
@@ -1215,19 +1270,22 @@ body.history-comment-modal-open {
   padding: 0 4px;
   border-left: 1px solid #e5e7eb;
   border-right: 1px solid #e5e7eb;
+  font-variant-numeric: tabular-nums;
 }
 
 .dependency-viewport {
   position: relative;
   margin-top: 10px;
   width: 100%;
-  height: 480px;
+  height: clamp(480px, calc(100vh - 260px), 900px);
   overflow: hidden;
   border: 1px solid #e5e7eb;
   border-radius: 6px;
   background: #fff;
   cursor: grab;
   user-select: none;
+  -webkit-user-select: none;
+  touch-action: none;
 }
 
 .dependency-viewport.is-dragging {
@@ -1238,92 +1296,261 @@ body.history-comment-modal-open {
   position: absolute;
   left: 0;
   top: 0;
-  width: 2400px;
-  height: 1400px;
   transform-origin: 0 0;
 }
 
 .dependency-edges {
   position: absolute;
-  inset: 0;
-  width: 2400px;
-  height: 1400px;
+  left: 0;
+  top: 0;
   overflow: visible;
   pointer-events: none;
 }
 
-.dependency-edge-path {
+/* ---- Connectors ---- */
+
+.dependency-edge {
   fill: none;
-  stroke: #98a2b3;
-  stroke-width: 2;
-  marker-end: url(#dependencyArrow);
+  stroke: #c3c9d4;
+  stroke-width: 1.5;
 }
 
-.dependency-edge-label {
-  font-size: 12px;
-  fill: #374151;
-  paint-order: stroke;
-  stroke: #fff;
-  stroke-width: 6px;
-  stroke-linejoin: round;
+.dependency-edge.is-incoming {
+  stroke: #a9cbe3;
 }
 
-.dependency-node {
+.dependency-edge.is-unlinked,
+.dependency-edge.is-more {
+  stroke-dasharray: 4 4;
+}
+
+.dependency-edge.is-on-path {
+  stroke: #6338e5;
+  stroke-width: 2.25;
+}
+
+/* ---- Asset box ---- */
+
+.dependency-node,
+.dependency-group,
+.dependency-more {
   position: absolute;
-  transform: translate(-50%, -50%);
+  box-sizing: border-box;
+}
+
+.dependency-node__card {
+  box-sizing: border-box;
+  width: 100%;
+  height: 100%;
   display: flex;
-  align-items: center;
+  flex-direction: column;
   justify-content: center;
-  cursor: move;
-}
-
-/* The parent (opened) asset is pinned at the top of the graph. */
-.dependency-node.is-fixed {
-  cursor: default;
-}
-
-.dependency-node-label {
-  min-width: 110px;
-  max-width: 230px;
-  padding: 9px 16px;
+  align-items: center;
+  gap: 1px;
+  padding: 0 12px;
   border: 1px solid #d7d7d7;
-  border-radius: 18px;
+  border-radius: 10px;
   background: #fff;
   text-align: center;
-  white-space: normal;
-  overflow-wrap: break-word;
-  word-break: break-word;
-  overflow: visible;
-  text-overflow: clip;
-  font-size: 12px;
-  line-height: 1.35;
-  color: #1f2937;
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.06);
+  cursor: pointer;
+  transition: border-color 0.15s ease;
 }
 
-.dependency-node.is-root .dependency-node-label {
-  background: #6338e5;
-  color: #fff;
-  border-color: #4c26c9;
-  font-size: 14px;
-  min-width: 140px;
-  padding: 11px 20px;
-  box-shadow: 0 3px 10px rgba(76, 38, 201, 0.28);
-}
-
-.dependency-node:hover .dependency-node-label {
+.dependency-node__card:hover {
   border-color: #9ca3af;
 }
 
-.dependency-node.is-selected .dependency-node-label {
+.dependency-node__name,
+.dependency-node__meta {
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.dependency-node__name {
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.35;
+  color: #1f2937;
+}
+
+.dependency-node__meta {
+  font-size: 11px;
+  line-height: 1.3;
+  color: #6b7280;
+}
+
+.dependency-node.is-root .dependency-node__card {
+  border-color: #4c26c9;
+  background: #6338e5;
+}
+
+.dependency-node.is-root .dependency-node__name {
+  font-size: 13px;
+  font-weight: 600;
+  color: #fff;
+}
+
+.dependency-node.is-root .dependency-node__meta {
+  color: rgba(255, 255, 255, 0.8);
+}
+
+.dependency-node.is-on-path .dependency-node__card {
+  border-color: #6338e5;
+}
+
+.dependency-node.is-selected .dependency-node__card {
   outline: 2px solid #6338e5;
   outline-offset: 2px;
 }
 
-.dependency-hint {
-  margin-top: 8px;
+/* Expand / collapse badge on the bottom edge, showing the child count */
+.dependency-node__toggle {
+  position: absolute;
+  left: 50%;
+  bottom: -11px;
+  transform: translateX(-50%);
+  min-width: 22px;
+  height: 22px;
+  padding: 0 6px;
+  border: 1px solid #d1d5db;
+  border-radius: 11px;
+  background: #fff;
+  font: inherit;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 20px;
+  color: #374151;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+  transition: border-color 0.15s ease, color 0.15s ease;
+}
+
+.dependency-node__toggle:hover {
+  border-color: #6338e5;
+  color: #4c26c9;
+}
+
+.dependency-node__toggle.is-expanded {
+  font-size: 13px;
+  line-height: 18px;
+}
+
+.dependency-node.is-root .dependency-node__toggle {
+  border-color: #4c26c9;
+}
+
+/* ---- Relationship-type pill between a parent and its children ---- */
+
+.dependency-group__btn {
+  box-sizing: border-box;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 4px 0 12px;
+  border: 1px solid #ddd3ff;
+  border-radius: 15px;
+  background: #f3f0ff;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 500;
+  color: #4c26c9;
+  cursor: pointer;
+  transition: border-color 0.15s ease;
+}
+
+.dependency-group__btn:hover {
+  border-color: #6338e5;
+}
+
+.dependency-group__label {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  text-align: left;
+}
+
+.dependency-group__dir {
+  flex: 0 0 auto;
   font-size: 12px;
+}
+
+.dependency-group__count {
+  flex: 0 0 auto;
+  min-width: 22px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: 10px;
+  background: #fff;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 20px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.dependency-group.is-incoming .dependency-group__btn {
+  border-color: #c7e3f6;
+  background: #eef7fd;
+  color: #0369a1;
+}
+
+.dependency-group.is-unlinked .dependency-group__btn {
+  border-style: dashed;
+  border-color: #d1d5db;
+  background: #f9fafb;
   color: #6b7280;
+}
+
+.dependency-group.is-collapsed .dependency-group__btn {
+  border-style: dashed;
+}
+
+/* ---- "Show N more" box at the end of a paged group ---- */
+
+.dependency-more {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  border: 1px dashed #b8bfcb;
+  border-radius: 10px;
+  background: #fff;
+}
+
+.dependency-more__btn {
+  height: 20px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  color: #4c26c9;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.dependency-more__btn:hover {
+  background: #f3f0ff;
+}
+
+.dependency-more__btn--all {
+  font-weight: 500;
+  color: #6b7280;
+}
+
+.dependency-section button:focus-visible {
+  outline: 2px solid #6338e5;
+  outline-offset: 1px;
 }
 
 .dependency-empty,
@@ -1339,6 +1566,14 @@ body.history-comment-modal-open {
 .dependency-empty[hidden],
 .dependency-loading[hidden] {
   display: none !important;
+}
+
+/* The dots replace the old "Loading..." text in the same centred spot: the
+   loader is sized to its dots, not to a card body. */
+.dependency-loading > .qaf-loader {
+  width: auto;
+  min-height: 0;
+  padding: 0;
 }
 
 #assetSerialDetailsAppHost * {
@@ -2002,4 +2237,52 @@ body.rel-modal-open {
 }
 .summary-col {
   border-bottom: 1px solid #e5e7eb;
+}
+
+/* ---------------- Asset Relationship: node details popup ---------------- */
+.dependency-node-popup {
+  position: fixed;
+  z-index: 1000;
+  min-width: 220px;
+  max-width: 320px;
+  padding: 12px 14px;
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(17, 24, 39, 0.16);
+  font-size: 12px;
+  line-height: 1.4;
+  color: #1f2937;
+}
+
+.dependency-node-popup[hidden] {
+  display: none;
+}
+
+.dependency-node-popup__title {
+  margin-bottom: 8px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid #eef0f3;
+  font-size: 13px;
+  font-weight: 600;
+  color: #111827;
+  overflow-wrap: anywhere;
+}
+
+.dependency-node-popup__row {
+  display: flex;
+  gap: 10px;
+  padding: 3px 0;
+}
+
+.dependency-node-popup__label {
+  flex: 0 0 96px;
+  color: #6b7280;
+}
+
+.dependency-node-popup__value {
+  flex: 1 1 auto;
+  min-width: 0;
+  color: #1f2937;
+  overflow-wrap: anywhere;
 }

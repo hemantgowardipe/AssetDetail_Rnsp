@@ -1,13 +1,41 @@
 (() => {
   "use strict";
 
+  /*
+   * One running copy per page view. When this script is executed a second time
+   * for the same page (the portal running the page script twice), both copies
+   * used to bind to the same tabs and buttons, each with its own "already
+   * loaded" flags and caches - so every request (Summary, Audit Log rnsp,
+   * ObjectGet/ViewGet...) went out once per copy. The page's root element
+   * records which copy owns it and for which address; a second copy for the
+   * same element and address stops here, before binding anything or calling
+   * any API. A fresh page view (new markup, or another record's address) is
+   * owned by its own copy as before.
+   */
+  const ASSET_DETAILS_PAGE_ROOT = document.querySelector(".asset-serial-page");
+  const ASSET_DETAILS_PAGE_KEY = String(window.location.pathname || "") + String(window.location.search || "");
+  if (
+    ASSET_DETAILS_PAGE_ROOT &&
+    ASSET_DETAILS_PAGE_ROOT.__assetDetailsOwnerKey === ASSET_DETAILS_PAGE_KEY
+  ) {
+    return;
+  }
+  if (ASSET_DETAILS_PAGE_ROOT) ASSET_DETAILS_PAGE_ROOT.__assetDetailsOwnerKey = ASSET_DETAILS_PAGE_KEY;
+  const ASSET_DETAILS_INSTANCE = (window.__assetDetailsInstanceSeq = (window.__assetDetailsInstanceSeq || 0) + 1);
+  window.__assetDetailsActiveInstance = ASSET_DETAILS_INSTANCE;
+  // False once a newer copy has taken over this page (e.g. the same markup
+  // reused for another record): this copy's still-bound tab handlers then
+  // load nothing, so only the newer copy calls the APIs.
+  function isActiveAssetDetailsInstance() {
+    return window.__assetDetailsActiveInstance === ASSET_DETAILS_INSTANCE;
+  }
+
   // Ceiling on how long first paint may be held for the summary tab's own data.
   // Past it the page shows with its loading placeholders: a slow or stalled API
   // must delay the page, never hide it.
   const PRELOAD_DATA_WAIT_MS = 2000;
   // The veil's own ceiling, above the data wait, so the two cannot deadlock.
   const PRELOAD_MAX_HOLD_MS = 4000;
-
   /*
    * Hide the UI until initialization finishes, so the static table markup in
    * AssetDetails.html does not flash up before the loaders replace it - the
@@ -87,6 +115,8 @@
   };
   const ASSET_DETAILS_SUMMARY_RNSP_NAME = "ASSET_DETAILS_SUMMARY";
   const ASSET_DETAILS_AUDIT_LOG_RNSP_NAME = "ASSET_DETAILS_AUDIT_LOG";
+  // Audit Log column view (POST {base_url}/api/rnsp), as on Asset Requisition.
+  const VIEW_GET_RNSP_NAME = "ViewGet_RNSP";
   const ASSET_DETAILS_OTHER_DETAILS_RNSP_NAME = "ASSET_DETAILS_OTHER_DETAILS_TAB";
   // Follows the same ASSET_DETAILS_<SECTION> naming used by the three RNSP
   // workflows above (Summary/Audit Log/Other Details). Not yet explicitly
@@ -149,7 +179,7 @@
   ];
   const ui = {
     backLink: document.getElementById("backToAssetDetails"),
-    tabs: Array.from(document.querySelectorAll(".asset-tab")),
+    tabs: Array.from(document.querySelectorAll(".settings-tab")),
     panels: Array.from(document.querySelectorAll(".tab-panel")),
     assetIdValue: document.getElementById("assetIdValue"),
     serialNumberValue: document.getElementById("serialNumberValue"),
@@ -182,7 +212,6 @@
     depZoomIn: document.getElementById("depZoomIn"),
     depZoomOut: document.getElementById("depZoomOut"),
     depFitView: document.getElementById("depFitView"),
-    dependencyViewButtons: Array.from(document.querySelectorAll("#depViewButtons .dep-view-btn")),
     addRelationshipBtn: document.getElementById("addRelationshipBtn"),
     addRelationshipModal: document.getElementById("addRelationshipModal"),
     relSourceCiValue: document.getElementById("relSourceCiValue"),
@@ -214,13 +243,28 @@
     historySortState: { columnKey: null, columnIndex: null, direction: null },
     otherDetailSectionsRaw: [],
     otherDetailSortStates: {},
+    // Child repository (normalized name) -> promise of its ObjectGet/ViewGet
+    // context, so each child table's view is read once per page.
+    otherDetailObjectContexts: {},
+    // Asset Allocation grid columns from the EAsset_Allocation view (null until read).
+    allocationColumns: null,
     activeAllocationMenuRecordKey: null,
     allocationRepoContext: null,
     masterObjectMeta: null,
+    historyObjectContext: null,
     latestDetailsForAllocation: null,
     allocationMenuPositionRaf: 0,
     pageDetails: null,
     currentUserIsAssetManager: false,
+    // EmployeeGUID for every id (RecordID / UserID / EmployeeID / EmployeeGUID,
+    // lower case) seen in a QAF_Users or Employees lookup, plus which ids each
+    // store has already been asked about - so the Asset Manager check can reuse
+    // the lookups the Summary already made instead of repeating them.
+    employeeGuidById: {},
+    qafUsersLookedUp: {},
+    employeesLookedUp: {},
+    // In-flight Summary reload after the asset edit form closes (one at a time).
+    summaryReloadPromise: null,
     tabLoaded: {
       summaryPanel: false,
       otherDetailPanel: false,
@@ -235,14 +279,29 @@
     },
     dependencyRowsRaw: [],
     dependencyGraph: {
-      nodes: [],
-      edges: [],
-      rootId: null,
       model: null,
-      currentView: "hierarchy",
+      // Spanning tree of the relationship graph (buildDependencyTree).
+      tree: null,
+      // Positioned boxes of the part of the tree on screen.
+      layout: null,
+      // Boxes per wrapped row of children; follows the viewport width.
+      columns: 0,
+      // Asset ids whose children are shown.
+      expanded: new Set(),
+      // Relationship groups the user folded away.
+      collapsedGroups: new Set(),
+      // Pages of children shown per relationship group ("Show more").
+      pageCounts: new Map(),
+      selectedId: null,
+      elements: new Map(),
+      edgeElements: new Map(),
       scale: 1,
       panX: 0,
-      panY: 0
+      panY: 0,
+      // True once the user has panned/zoomed, so a resize no longer refits.
+      userMoved: false,
+      // First view waits until the viewport has a size (tab visible).
+      pendingInitialView: false
     }
   };
 
@@ -257,6 +316,23 @@
     { key: "CreatedBy", label: "Created By", isDate: false }
   ];
 
+  // Columns the Asset Allocation grid shows: the EAsset_Allocation VIEW's fields
+  // once it has been read (state.allocationColumns, see
+  // resolveAllocationViewColumns - same ObjectGet/ViewGet/seq logic as the Audit
+  // Log), ALLOCATION_GRID_COLUMNS until then or if the view can't be read.
+  function getAllocationColumns() {
+    return Array.isArray(state.allocationColumns) && state.allocationColumns.length
+      ? state.allocationColumns
+      : ALLOCATION_GRID_COLUMNS;
+  }
+
+  function isAllocationRemarksColumn(column) {
+    const token = String((column && (column.internalName || column.key)) || "")
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "");
+    return token === "remarks" || token === "remark" || token === "comments" || token === "comment";
+  }
+
   const ALLOCATION_ROW_ACTION_ITEMS = [
     { key: "view", label: "View", icon: "fa fa-eye" },
     { key: "edit", label: "Edit", icon: "fa fa-pencil" }
@@ -267,21 +343,30 @@
   let historyGridEventsBound = false;
   let otherDetailGridEventsBound = false;
 
-  const ALLOCATION_TABLE_RESIZE_KEY = "assetSerialAllocationTable";
-  const TICKETS_TABLE_RESIZE_KEY = "assetSerialTicketsTable";
-  const HISTORY_TABLE_RESIZE_KEY = "assetSerialHistoryLogTable";
+  // localStorage keys the grids' column widths used to be cached under
+  // (Allocation, Tickets, Audit Log and every Other Details table) - only
+  // matched to delete them; widths are no longer remembered.
+  const LEGACY_COLUMN_WIDTH_KEY_PATTERN =
+    /^gridtable:widths:assetSerial(AllocationTable|TicketsTable|HistoryLogTable|OtherDetailTable_\d+)$/;
   // Column set the audit log falls back to before (or without) a response - the
   // loading header, the empty state and renderHistoryGrid all read it, so the
   // header never changes shape between those states.
   const HISTORY_DEFAULT_COLUMNS = ["Asset", "Employees", "Action Date", "Status", "Comments"];
-  const OTHER_DETAIL_TABLE_RESIZE_KEY_PREFIX = "assetSerialOtherDetailTable";
+  // Internal-name/label pairs mirroring HISTORY_DEFAULT_COLUMNS, used when the
+  // EAsset_History ObjectGet/ViewGet lookup fails or returns no view fields.
+  const HISTORY_DEFAULT_COLUMN_DEFS = [
+    { internalName: "Asset", label: "Asset" },
+    { internalName: "Employees", label: "Employees" },
+    { internalName: "ActionDate", label: "Action Date" },
+    { internalName: "Status", label: "Status" },
+    { internalName: "Comments", label: "Comments" }
+  ];
   /** Drag-resize clamp range for table columns, matching TABLE_COL_MAX_WIDTH /
    *  the 100px floor used by setupAssetReqColumnResize on the Requisition page. */
   const COLUMN_RESIZE_MIN_WIDTH = 90;
   const COLUMN_RESIZE_MAX_WIDTH = 640;
   const TICKETS_WRAP_MIN_LENGTH = 30;
   const HISTORY_COMMENT_MORE_MIN_LENGTH = 40;
-  const TICKETS_DATE_ONLY_COLUMNS = ["Created Date"];
 
   function getUrlParamCaseInsensitive(name) {
     const params = new URLSearchParams(window.location.search || "");
@@ -448,12 +533,47 @@
     return String(payload.employeeguid || payload.EmployeeGUID || "").trim().toLowerCase();
   }
 
+  // Same rules as Asset Search's canEditAsset (highest permission held wins):
+  //   11 / 22-3 - full access: Edit on every asset.
+  //   22-2      - Edit on the assets where the user is the Asset Manager; takes
+  //               precedence over 22-1 when both are held (22-1 used to be
+  //               checked first here, which hid Edit from those users).
+  //   22-1      - read only: no Edit.
   function canShowMasterEditButton() {
     const entries = readNewLpEntries();
     if (hasAnyNewLp(entries, EDIT_ACCESS_NEW_LP)) return true;
-    if (hasAnyNewLp(entries, ["22-1"])) return false;
     if (hasAnyNewLp(entries, ["22-2"])) return Boolean(state.currentUserIsAssetManager);
     return false;
+  }
+
+  // Every id the signed-in user can appear under in an Asset Manager value
+  // (EmployeeGUID, and the QAF_Users / employee RecordID when user_key has
+  // them) - same as Asset Search's getCurrentUserIdentityIds.
+  function getCurrentUserIdentityIds() {
+    const payload = getUserKeyPayload();
+    const ids = new Set();
+    [
+      payload.employeeguid,
+      payload.EmployeeGUID,
+      payload.EmployeeGuid,
+      payload.userid,
+      payload.UserID,
+      payload.UserId,
+      payload.recordid,
+      payload.RecordID,
+      payload.RecordId
+    ].forEach((value) => {
+      const id = String(value == null ? "" : value).trim().toLowerCase();
+      if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(id)) ids.add(id);
+    });
+    return ids;
+  }
+
+  /* Same rule as the nav dock: only Super Admin (11) / Asset Admin (22-3)
+     get full access. Asset Edit (22-2) and Read Only (22-1) users can view
+     the Asset Relationship tab but cannot add relationships. */
+  function canAddRelationship() {
+    return hasAnyNewLp(readNewLpEntries(), EDIT_ACCESS_NEW_LP);
   }
 
   function getAuthHeaders() {
@@ -1083,22 +1203,46 @@
     return icon ? `${icon} ${text}` : text;
   }
 
+  /**
+   * True when a value actually carries a clock time worth showing - it parsed
+   * with a time part, and that part is not the literal 00:00:00 the backend
+   * sends for "no time recorded". A bare date ("2026-10-31") and a midnight
+   * placeholder both return false, so neither can be turned into a fabricated
+   * time by the timezone shift.
+   */
+  function hasRealTimeComponent(raw) {
+    const parsed = parseApiDateValue(raw);
+    if (!parsed || !parsed.hasTime) return false;
+    return !isMidnightApiDateTimeValue(raw);
+  }
+
   function formatDateValueForDisplay(raw, options = {}) {
     const text = String(raw == null ? "" : raw).trim();
     if (!text || text === "-") return "";
     const label = String(options.label || options.columnLabel || "").trim();
     const internalName = String(options.internalName || "").trim();
     const objectMeta = options.objectMeta || null;
+    // A caller that already resolved the field's metadata (the allocation grid
+    // keeps it on each column) passes it straight in.
     const fieldMeta =
-      internalName && objectMeta ? getObjectFieldMeta(objectMeta, internalName) : null;
+      options.fieldMeta ||
+      (internalName && objectMeta ? getObjectFieldMeta(objectMeta, internalName) : null);
     const isDate = isDateFieldMeta(fieldMeta) || isDateLikeFieldName(label);
     if (!isDate) return text;
     // Every API DateTime is UTC, so there is no longer a "forceUtc" distinction.
-    if (isFieldDateOnly(fieldMeta)) {
-      // ObjectGet DateOnly:true -> calendar date only, no time, no offset shift.
+    //
+    // Whether a time appears is decided by the value, never by the field's
+    // ObjectGet DateOnly flag. Two fields holding the identical value - e.g.
+    // WarrantyDate and ToDate, both "2026-10-31T06:30:00" - used to render
+    // differently purely because one was configured DateOnly and the other was
+    // not. A value that carries a real clock time now always shows it, and one
+    // that does not stays a bare date, wherever it is rendered.
+    if (!hasRealTimeComponent(text)) {
       return formatUserDate(text) || text;
     }
-    return formatUserDateTime(text, options.includeSeconds === true) || text;
+    // Match AssetType.js: a date-time value shows the seconds the backend
+    // actually returned unless a caller explicitly opts out.
+    return formatUserDateTime(text, options.includeSeconds !== false) || text;
   }
 
   function isDateLikeFieldName(label) {
@@ -1437,6 +1581,26 @@
     return [];
   }
 
+  // Records the EmployeeGUID a QAF_Users / Employees row carries under each id
+  // the row is known by (all lower case), for checkCurrentUserIsAssetManager.
+  function rememberEmployeeGuids(rows) {
+    (Array.isArray(rows) ? rows : []).forEach((row) => {
+      const employeeGuid = String((row && (row.EmployeeGUID || row.EmployeeGuid)) || "").trim().toLowerCase();
+      if (!employeeGuid) return;
+      [row.RecordID, row.UserID, row.EmployeeID, employeeGuid].forEach((key) => {
+        const id = String(key == null ? "" : key).trim().toLowerCase();
+        if (id) state.employeeGuidById[id] = employeeGuid;
+      });
+    });
+  }
+
+  function markLookedUp(store, ids) {
+    ids.forEach((id) => {
+      const key = String(id == null ? "" : id).trim().toLowerCase();
+      if (key) store[key] = true;
+    });
+  }
+
   async function fetchEmployeesMapByIds(recordIds, signal) {
     const uniqueIds = [...new Set((Array.isArray(recordIds) ? recordIds : []).filter(Boolean))];
     if (!uniqueIds.length) return {};
@@ -1459,6 +1623,8 @@
         signal
       );
       const rows = normalizeRecords(payload);
+      rememberEmployeeGuids(rows);
+      markLookedUp(state.employeesLookedUp, uniqueIds);
       return rows.reduce((acc, employee) => {
         const recordId = String((employee && employee.RecordID) || "").trim();
         const employeeGuid = String((employee && (employee.EmployeeGUID || employee.EmployeeGuid)) || "").trim();
@@ -1556,6 +1722,8 @@
           signal
         );
         const rows = normalizeRecords(payload);
+        rememberEmployeeGuids(rows);
+        markLookedUp(state.qafUsersLookedUp, uniqueIds);
         if (!rows.length) continue;
         const map = rows.reduce((acc, user) => {
           const recordId = String((user && user.RecordID) || "").trim();
@@ -1614,13 +1782,27 @@
     if (!asset || typeof asset !== "object") return ids;
 
     function pushLookupIds(rawValue) {
-      const text = String(rawValue == null ? "" : rawValue).trim();
+      if (rawValue == null || rawValue === "") return;
+      // Asset Manager arrives in several shapes ("id;#Name", a GUID, a JSON
+      // [{RecordID|EmployeeGUID|UserID...}] list, or an object) - same as
+      // Asset Search, every GUID found anywhere in the value is taken too.
+      let text = String(rawValue).trim();
+      if (typeof rawValue === "object") {
+        try {
+          text = JSON.stringify(rawValue);
+        } catch (_error) {
+          text = "";
+        }
+      }
       if (!text) return;
       if (text.includes(";#")) {
         const lookupId = String(text.split(";#")[0] || "").trim();
         if (lookupId) ids.push(lookupId);
       }
       parseAssignedRecordIds(rawValue).forEach((id) => ids.push(id));
+      (text.match(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi) || []).forEach((guid) =>
+        ids.push(guid.toLowerCase())
+      );
     }
 
     pushLookupIds(getValue(asset, ["AssetManager", "Asset Manager"]));
@@ -1670,6 +1852,8 @@
       try {
         const payload = await apiGetItems(objectName, fieldList, whereClause, { pageSize: 100000 }, signal);
         const rows = normalizeRecords(payload);
+        rememberEmployeeGuids(rows);
+        markLookedUp(objectName === "QAF_Users" ? state.qafUsersLookedUp : state.employeesLookedUp, uniqueIds);
         rows.forEach((row) => {
           const employeeGuid = String((row && (row.EmployeeGUID || row.EmployeeGuid)) || "")
             .trim()
@@ -1693,19 +1877,69 @@
     return guids;
   }
 
+  /**
+   * ASSET_DETAILS_SUMMARY returns Asset Manager already resolved to a display
+   * name, which carries no id to match the signed-in user against - so for an
+   * Asset Edit (22-2) user the Edit button never showed. As in Asset Search
+   * (fetchMissingAssetManagers), the raw value is read from the asset master
+   * (EAsset_Master, RecordID + AssetManager) when the Summary's value has no id.
+   * Only for 22-2 users without full access - nobody else's Edit depends on it -
+   * and only once per page.
+   */
+  async function getAssetForManagerCheck(details) {
+    const asset = (details && details.asset) || {};
+    const entries = readNewLpEntries();
+    if (hasAnyNewLp(entries, EDIT_ACCESS_NEW_LP) || !hasAnyNewLp(entries, ["22-2"])) return asset;
+    const guidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    if (collectAssetManagerIds(asset).some((id) => guidPattern.test(String(id).trim()))) return asset;
+    const recordId = String((details && details.recordId) || "").trim();
+    if (!recordId) return asset;
+    try {
+      const master = await fetchAssetMasterRecord(recordId, ["RecordID", "AssetManager"]);
+      const raw = master && (master.AssetManager != null && master.AssetManager !== ""
+        ? master.AssetManager
+        : getValue(master, ["AssetManager", "Asset Manager"]));
+      if (raw == null || raw === "") return asset;
+      // Only for this check: the Summary keeps showing the resolved name.
+      return { ...asset, AssetManager: raw, RecordFieldValues: [] };
+    } catch (_error) {
+      return asset;
+    }
+  }
+
   async function checkCurrentUserIsAssetManager(asset, signal) {
+    // The user is matched by every id user_key carries for them (EmployeeGUID,
+    // UserID, RecordID), as in Asset Search's isCurrentUserAssetManagerForRow -
+    // not only by EmployeeGUID.
     const currentGuid = getCurrentEmployeeGuid();
-    if (!currentGuid) return false;
+    const identityIds = getCurrentUserIdentityIds();
+    if (currentGuid) identityIds.add(currentGuid);
+    if (!identityIds.size) return false;
+    const isMe = (id) => identityIds.has(String(id == null ? "" : id).trim().toLowerCase());
 
     const managerIds = collectAssetManagerIds(asset);
     if (!managerIds.length) return false;
 
     for (let i = 0; i < managerIds.length; i += 1) {
-      if (String(managerIds[i]).trim().toLowerCase() === currentGuid) return true;
+      if (isMe(managerIds[i])) return true;
     }
 
-    const managerGuids = await fetchEmployeeGuidsForRecordIds(managerIds, signal);
-    return managerGuids.has(currentGuid);
+    // The Summary's own Asset Manager / Assigned To lookups (QAF_Users and
+    // Employees, same ids and where clause) already returned each row's
+    // EmployeeGUID: those answer first, so the same two queries are not sent
+    // again. Only ids neither store has been asked about yet are looked up.
+    for (let i = 0; i < managerIds.length; i += 1) {
+      if (isMe(state.employeeGuidById[String(managerIds[i]).trim().toLowerCase()])) return true;
+    }
+    const notYetLookedUp = managerIds.filter((id) => {
+      const key = String(id).trim().toLowerCase();
+      if (state.employeeGuidById[key]) return false;
+      return !(state.qafUsersLookedUp[key] && state.employeesLookedUp[key]);
+    });
+    if (!notYetLookedUp.length) return false;
+
+    const managerGuids = await fetchEmployeeGuidsForRecordIds(notYetLookedUp, signal);
+    return [...managerGuids].some(isMe);
   }
 
   function formatAssignedToValue(rawValue) {
@@ -2086,6 +2320,38 @@
       .map((entry) => entry.row);
   }
 
+  /**
+   * True when the raw API DateTime's literal clock part is exactly 00:00:00
+   * (e.g. "2026-10-08T00:00:00") - a backend placeholder meaning "no time was
+   * recorded", not an actual midnight instant. Checked against the raw digits
+   * before any timezone shifting, since shifting a placeholder time could
+   * fabricate a non-midnight time that was never really there. Applied inside
+   * formatDateValueForDisplay(), so every tab that renders a date through it -
+   * Summary, Other Details, Allocation, Tickets - shows exactly what the
+   * backend sent and never guesses a time.
+   */
+  function isMidnightApiDateTimeValue(raw) {
+    const text = String(raw == null ? "" : raw).trim();
+    if (!text) return false;
+    const match = /^\d{4}-\d{1,2}-\d{1,2}[T\s](\d{1,2}):(\d{2})(?::(\d{2}))?(?:\.\d+)?\s*(?:Z|[+-]\d{2}:?\d{2})?$/i.exec(
+      text
+    );
+    if (!match) return false;
+    const hours = Number(match[1]);
+    const minutes = Number(match[2]);
+    const seconds = match[3] != null ? Number(match[3]) : 0;
+    return hours === 0 && minutes === 0 && seconds === 0;
+  }
+
+  /**
+   * Other Details grid cell formatter. Date-vs-text formatting (including the
+   * no-guessed-midnight-time rule) lives centrally in formatDateValueForDisplay(),
+   * reached via formatCellDisplayMarkup() -> formatFieldDisplayValue().
+   */
+  function formatOtherDetailCellDisplay(raw, options) {
+    return formatCellDisplayMarkup(raw, options);
+  }
+
   function renderOtherDetailSections(sections) {
     if (!ui.otherDetailContent) return;
     if (Array.isArray(sections)) {
@@ -2112,7 +2378,14 @@
                   ? "↑"
                   : "↓"
                 : "↕";
-            return `<th class="is-sortable" data-other-detail-sort-index="${columnIndex}" data-other-detail-sort-key="${escapeHtml(
+            // global.css keeps the sort glyph at opacity:0 and reveals it on
+            // th:hover, th:focus-within or th.is-sorted. Without .is-sorted the
+            // arrow flipped to the sorted direction but stayed invisible, so the
+            // column gave no sign it was sorted unless the pointer was over it.
+            // Marking the active column is what the Setting page's grid does
+            // (settings.js renders the same " is-sorted" on its sorted <th>).
+            const sortedClass = activeKey === column ? " is-sorted" : "";
+            return `<th class="is-sortable${sortedClass}" data-other-detail-sort-index="${columnIndex}" data-other-detail-sort-key="${escapeHtml(
               column
             )}"><span class="th-label">${escapeHtml(column)}</span><span class="th-sort-icon" aria-hidden="true">${arrow}</span></th>`;
           })
@@ -2128,7 +2401,7 @@
                       const columnDef = Array.isArray(section.columnDefs)
                         ? section.columnDefs.find((entry) => entry.displayName === column)
                         : null;
-                      const display = formatCellDisplayMarkup(cellValue, {
+                      const display = formatOtherDetailCellDisplay(cellValue, {
                         columnLabel: column,
                         internalName: columnDef && columnDef.internalName,
                         objectMeta: section.objectMeta
@@ -2138,14 +2411,14 @@
                     .join("")}</tr>`
               )
               .join("")
-          : `<tr><td colspan="${columns.length}" class="history-log-empty">No Records Found</td></tr>`;
+          : buildTableMessageRowHtml(columns.length, "No Records Found");
         return `
           <section class="other-detail-section">
             <h2 class="other-detail-title">${escapeHtml(section.title)}</h2>
             <div class="other-detail-table-wrap qaf-scrollbar-thin">
               <table class="other-detail-table" data-other-detail-section-key="${escapeHtml(
                 sectionKey
-              )}" data-resize-key="${OTHER_DETAIL_TABLE_RESIZE_KEY_PREFIX}_${sectionIndex}" aria-label="${escapeHtml(section.title)} details">
+              )}" aria-label="${escapeHtml(section.title)} details">
                 <thead><tr>${headerHtml}</tr></thead>
                 <tbody>${rowsHtml}</tbody>
               </table>
@@ -2156,8 +2429,153 @@
       .join("");
 
     Array.from(ui.otherDetailContent.querySelectorAll(".other-detail-table")).forEach((table) => {
-      refreshSerialGridTable(table);
+      refreshSerialGridTable(table, getOtherDetailColumnSizing(table));
     });
+    syncTableMessageWidths();
+  }
+
+  /*
+   * Message rows ("No Records Found" / "No Record Found" / "Loading...") in the
+   * Other Details and Audit Log grids. The row's cell spans every column, so it
+   * is as wide as the whole table - often far wider than the box showing it - and
+   * text centred in it landed off-centre or out of view. The text sits in an
+   * inner block instead, sticky to the scroll box's left edge and exactly as
+   * wide as the box's visible area (--asd-table-visible-w on each wrap), so it is
+   * centred in what the user sees whatever the number or width of the columns
+   * and however far they are scrolled. The width is kept current by a
+   * ResizeObserver on each table box (window resize, zoom, nav dock, tab shown,
+   * columns resized).
+   */
+  const TABLE_MESSAGE_WRAP_SELECTOR =
+    ".other-detail-table-wrap, .history-log-table-wrap, .allocation-table-wrap, .tickets-table-wrap";
+  let tableMessageObserver = null;
+
+  function buildTableMessageRowHtml(columnCount, message) {
+    return `<tr><td colspan="${Math.max(Number(columnCount) || 0, 1)}" class="history-log-empty asd-table-message"><div class="asd-table-message__text" role="status">${escapeHtml(
+      message
+    )}</div></td></tr>`;
+  }
+
+  /*
+   * The three-dot loader (global.css "Reusable Loader (qaf-loader)"), written
+   * with the same structure QafLibrary.Loader.html() produces. The library is
+   * used when it offers the Loader; otherwise the markup is built here, so the
+   * page does not depend on which library build is deployed.
+   */
+  function buildLoaderHtml() {
+    const library = window.QafLibrary;
+    if (library && library.Loader && typeof library.Loader.html === "function") {
+      return library.Loader.html();
+    }
+    const dot = '<span class="qaf-loader__dot" aria-hidden="true"></span>';
+    return `<div class="qaf-loader" role="status" aria-label="Loading">${dot}${dot}${dot}</div>`;
+  }
+
+  // Same row as buildTableMessageRowHtml (same cell, same centring block), with
+  // the dots where the "Loading..." text used to be.
+  function buildTableLoadingRowHtml(columnCount) {
+    return `<tr><td colspan="${Math.max(Number(columnCount) || 0, 1)}" class="history-log-empty asd-table-message"><div class="asd-table-message__text">${buildLoaderHtml()}</div></td></tr>`;
+  }
+
+  function setTableMessageWidth(wrap) {
+    if (!wrap) return;
+    const width = wrap.clientWidth;
+    if (!width) return;
+    const value = `${width}px`;
+    if (wrap.style.getPropertyValue("--asd-table-visible-w") !== value) {
+      wrap.style.setProperty("--asd-table-visible-w", value);
+    }
+  }
+
+  function syncTableMessageWidths() {
+    const wraps = Array.from(document.querySelectorAll(TABLE_MESSAGE_WRAP_SELECTOR));
+    if (!tableMessageObserver && typeof window.ResizeObserver === "function") {
+      tableMessageObserver = new window.ResizeObserver((entries) => {
+        entries.forEach((entry) => setTableMessageWidth(entry.target));
+      });
+    }
+    wraps.forEach((wrap) => {
+      setTableMessageWidth(wrap);
+      if (tableMessageObserver && !wrap.__asdMessageObserved) {
+        wrap.__asdMessageObserved = true;
+        tableMessageObserver.observe(wrap);
+      }
+    });
+  }
+
+  /*
+   * Other Details shows every column name and every value in full - nothing is
+   * cut off with an ellipsis (see the Other Details rules in
+   * asset-serial-details.css).
+   *  - A column is never narrower than its full header name (plus the sort
+   *    glyph's band and the cell padding): that is its minimum, so neither the
+   *    initial layout, a width saved from an earlier drag, nor a drag can
+   *    truncate the name.
+   *  - It starts wide enough for its values too, up to OTHER_DETAIL_VALUE_MAX_PX;
+   *    a longer value wraps onto further lines inside the cell instead of being
+   *    clipped.
+   * Text is measured with the cells' own computed font, before GridTable takes
+   * over the table's sizing.
+   */
+  const OTHER_DETAIL_VALUE_MAX_PX = 360;
+  let otherDetailMeasureContext = null;
+
+  function measureOtherDetailText(text, element) {
+    try {
+      if (!otherDetailMeasureContext) {
+        otherDetailMeasureContext = document.createElement("canvas").getContext("2d");
+      }
+      const style = window.getComputedStyle(element);
+      otherDetailMeasureContext.font = [style.fontStyle, style.fontWeight, style.fontSize, style.fontFamily].join(" ");
+      let width = otherDetailMeasureContext.measureText(String(text || "")).width;
+      const spacing = parseFloat(style.letterSpacing);
+      if (Number.isFinite(spacing)) width += spacing * String(text || "").length;
+      return width;
+    } catch (_) {
+      return 0;
+    }
+  }
+
+  function horizontalPadding(element) {
+    const style = window.getComputedStyle(element);
+    return (parseFloat(style.paddingLeft) || 0) + (parseFloat(style.paddingRight) || 0);
+  }
+
+  function getOtherDetailColumnSizing(table) {
+    const headers = Array.from(table.querySelectorAll("thead th"));
+    const bodyRows = Array.from(table.querySelectorAll("tbody tr")).slice(0, 200);
+    const widths = [];
+    const minWidths = [];
+    const maxWidths = [];
+
+    headers.forEach((th, index) => {
+      const label = th.querySelector(".th-label") || th;
+      // Full header: text + the label's own reserved band (sort glyph) + the
+      // cell padding + room for the resize handle.
+      const headerNeed = Math.ceil(
+        measureOtherDetailText(label.textContent.trim(), label) +
+          horizontalPadding(label) +
+          horizontalPadding(th) +
+          12
+      );
+
+      let valueNeed = 0;
+      bodyRows.forEach((tr) => {
+        const td = tr.children[index];
+        if (!td || td.hasAttribute("colspan")) return;
+        const text = td.textContent.trim();
+        if (!text) return;
+        valueNeed = Math.max(valueNeed, measureOtherDetailText(text, td) + horizontalPadding(td));
+      });
+      valueNeed = Math.ceil(Math.min(valueNeed, OTHER_DETAIL_VALUE_MAX_PX));
+
+      const minWidth = Math.max(COLUMN_RESIZE_MIN_WIDTH, headerNeed);
+      minWidths[index] = minWidth;
+      widths[index] = Math.max(minWidth, valueNeed);
+      maxWidths[index] = Math.max(COLUMN_RESIZE_MAX_WIDTH, minWidth);
+    });
+
+    return { columnWidths: widths, columnMinWidths: minWidths, columnMaxWidths: maxWidths };
   }
 
   function onOtherDetailContentClick(event) {
@@ -2346,6 +2764,99 @@
     }
   }
 
+  /*
+   * The record's audit columns, shown only when the child table's view
+   * includes them. ChildData carries them under the system names (CreatedDate,
+   * LastModifiedDate, LastModifiedBy, CreatedByID...), so each column is read
+   * from the first of its keys that has a value. The two "By" columns hold user
+   * GUIDs, which are shown as the user's name once it is known (see
+   * ensureOtherDetailUserNames).
+   */
+  const OTHER_DETAIL_AUDIT_COLUMNS = [
+    {
+      label: "Created By",
+      isPerson: true,
+      keys: ["CreatedBy", "CreatedByName", "CreatedByID", "CreatedByGUID"]
+    },
+    { label: "Created Date", isPerson: false, keys: ["CreatedDate"] },
+    {
+      label: "Modified By",
+      isPerson: true,
+      keys: ["LastModifiedBy", "ModifiedBy", "LastModifiedByName", "LastModifiedByID", "LastModifiedByGUID"]
+    },
+    { label: "Modified Date", isPerson: false, keys: ["LastModifiedDate", "ModifiedDate"] }
+  ];
+
+  // Compact key -> audit column, for every key and label the column is known by.
+  const OTHER_DETAIL_AUDIT_LOOKUP = (() => {
+    const lookup = new Map();
+    OTHER_DETAIL_AUDIT_COLUMNS.forEach((column) => {
+      [column.label, ...column.keys].forEach((name) => lookup.set(compactFieldKey(name), column));
+    });
+    return lookup;
+  })();
+
+  function findOtherDetailAuditColumn(...names) {
+    for (let i = 0; i < names.length; i += 1) {
+      const column = OTHER_DETAIL_AUDIT_LOOKUP.get(compactFieldKey(names[i]));
+      if (column) return column;
+    }
+    return null;
+  }
+
+  function resolveOtherDetailPersonName(value) {
+    const id = String(value == null ? "" : value).trim();
+    if (!id) return "";
+    return resolvePersonNameById(id) || resolvePersonNameById(id.toLowerCase()) || id;
+  }
+
+  function getOtherDetailAuditValue(childData, auditColumn) {
+    const keys = Object.keys(childData || {});
+    for (let i = 0; i < auditColumn.keys.length; i += 1) {
+      const target = compactFieldKey(auditColumn.keys[i]);
+      const key = keys.find((candidate) => compactFieldKey(candidate) === target);
+      if (!key) continue;
+      const value = childData[key];
+      if (value == null || typeof value === "object") continue;
+      const text = parseLookupLabel(value);
+      if (!String(text || "").trim()) continue;
+      return auditColumn.isPerson ? resolveOtherDetailPersonName(text) : text;
+    }
+    return null;
+  }
+
+  // Looks up the names of the users in the audit "By" columns of every child
+  // record, so the tables show names instead of GUIDs. A failed lookup leaves the
+  // GUIDs as they are; it never stops the tab from loading.
+  async function ensureOtherDetailUserNames(rows, signal) {
+    try {
+      const ids = new Set();
+      (Array.isArray(rows) ? rows : []).forEach((row) => {
+        const childData = parseOtherDetailChildData(row && row.ChildData);
+        if (!childData) return;
+        OTHER_DETAIL_AUDIT_COLUMNS.filter((column) => column.isPerson).forEach((column) => {
+          const value = getOtherDetailAuditValue(childData, { ...column, isPerson: false });
+          if (value) ids.add(String(value).trim());
+        });
+      });
+      const missing = [...ids].filter(
+        (id) => !resolvePersonNameById(id) && !resolvePersonNameById(id.toLowerCase())
+      );
+      if (!missing.length) return;
+      let delta = await fetchQafUsersMapByIds(missing, signal);
+      const unresolved = missing.filter((id) => !delta[id]);
+      if (unresolved.length) {
+        delta = { ...(await fetchEmployeesMapByIds(unresolved, signal)), ...delta };
+      }
+      Object.keys(delta).forEach((key) => {
+        state.qafUserNameById[key] = delta[key];
+        state.qafUserNameById[String(key).toLowerCase()] = delta[key];
+      });
+    } catch (_error) {
+      // Names are a nicety; the GUIDs still show.
+    }
+  }
+
   function toOtherDetailChildDataRow(childData) {
     const ignored = new Set([
       "RecordID",
@@ -2360,24 +2871,14 @@
       "ChildRecordId",
       "ChildParentRecordID",
       "ChildParentRecordId",
-      "CreatedBy",
-      "LastModifiedBy",
-      "CreatedDate",
-      "LastModifiedDate",
-      "CreatedByID",
-      "CreatedById",
-      "CreatedByGUID",
-      "CreatedByGuid",
-      "LastModifiedByID",
-      "LastModifiedById",
-      "LastModifiedByGUID",
-      "LastModifiedByGuid",
       "WFInstanceID",
       "WFInstanceId"
     ]);
     const out = {};
     Object.keys(childData || {})
-      .filter((key) => !ignored.has(key))
+      // This fallback has no view to say which columns to show, so the audit
+      // fields stay out of it, as before.
+      .filter((key) => !ignored.has(key) && !findOtherDetailAuditColumn(key))
       .forEach((key) => {
         const value = childData[key];
         // Skip nested objects/arrays (not a flat, displayable field) but keep the
@@ -2396,44 +2897,208 @@
     return out;
   }
 
-  function buildOtherDetailSectionsFromRnspRows(rows) {
+  // Groups the RNSP rows by child repository, in response order. Each entry
+  // keeps the parsed ChildData and whether the row is a real child record (the
+  // workflow LEFT JOINs, so a child table with no records for this asset comes
+  // back as one row with no ChildRecordID and every field null). Each group
+  // also carries the RNSP's ChildFieldName, used as the section's title.
+    function isRemovedChildRecord(childData) {
+      const key = Object.keys(childData).find((k) => /^record[ _]?state$/i.test(k));
+    return Boolean(key) && /^inactive$/i.test(String(childData[key] ?? "").trim());
+  }
+  function groupOtherDetailRnspRows(rows) {
     const order = [];
-    const rowsByRepo = new Map();
+    const entriesByRepo = new Map();
+    const titleByRepo = new Map();
     (Array.isArray(rows) ? rows : []).forEach((row) => {
       const repoName = String((row && row.ChildRepository) || "").trim();
       if (!repoName) return;
-      const childData = parseOtherDetailChildData(row && row.ChildData);
-      if (!childData) return;
-      const rowObject = toOtherDetailChildDataRow(childData);
-      if (!Object.keys(rowObject).length) return;
-      if (!rowsByRepo.has(repoName)) {
-        rowsByRepo.set(repoName, []);
+      const childFieldName = String((row && row.ChildFieldName) || "").trim();
+      if (childFieldName && !titleByRepo.has(repoName)) titleByRepo.set(repoName, childFieldName);
+      // The repository is registered as soon as the response names it, before
+      // its ChildData is read. A child table with no record for this asset can
+      // come back as ChildData: null (or "", {}, []); registering after the
+      // check below meant null/"" dropped the repository from `order` entirely,
+      // so its whole section vanished, while {}/[] still rendered - the same
+      // empty state showing two different ways depending on how the workflow
+      // spelled it. Registering here keeps a section for every repository the
+      // response names, which then reads "No Records Found" under the view's
+      // columns, as buildOtherDetailSectionFromView already intends.
+      if (!entriesByRepo.has(repoName)) {
+        entriesByRepo.set(repoName, []);
         order.push(repoName);
       }
-      rowsByRepo.get(repoName).push(rowObject);
+      const childData = parseOtherDetailChildData(row && row.ChildData);
+      if (!childData) return;
+      const childRecordId = String((row && (row.ChildRecordID ?? row.ChildRecordId)) || "").trim();
+      const hasValue = Object.keys(childData).some((key) => {
+        const value = childData[key];
+        return value != null && typeof value !== "object" && String(value).trim() !== "";
+      });
+      if (isRemovedChildRecord(childData)) return;
+      entriesByRepo.get(repoName).push({ childData, isRecord: Boolean(childRecordId) || hasValue });
     });
+    return order.map((repoName) => ({
+      repoName,
+      title: titleByRepo.get(repoName) || "",
+      entries: entriesByRepo.get(repoName)
+    }));
+  }
 
+  // Fallback for a child table whose view can't be read: one column per field
+  // the workflow returned, in its order. Same row rule as the view path: only
+  // real child records with something to show become rows - a table with no
+  // records (or only empty ones) shows its columns and "No Records Found"
+  // instead of a blank line.
+  function buildOtherDetailSectionFromData(group) {
+    const converted = group.entries.map((entry) => ({
+      isRecord: entry.isRecord,
+      row: toOtherDetailChildDataRow(entry.childData)
+    }));
+    const columns = buildDynamicColumnsFromRowKeys(
+      converted.map((item) => item.row).filter((rowObject) => Object.keys(rowObject).length)
+    );
+    if (!columns.length) return null;
+    const sectionRows = converted
+      .filter((item) => item.isRecord)
+      .map((item) => item.row)
+      .filter((row) => Object.keys(row).some((key) => String(row[key] == null ? "" : row[key]).trim() !== ""));
+    return {
+      title: group.title || normalizeFieldLabel(group.repoName) || group.repoName,
+      objectMeta: null,
+      columnDefs: columns.map((column) => ({ internalName: column, displayName: column })),
+      columns,
+      rows: sectionRows
+    };
+  }
+
+  /*
+   * Child-table columns follow each child table's VIEW, exactly like the Audit
+   * Log: ObjectGet(child repository) -> its Fields and ObjectID, ViewGet(ObjectID)
+   * -> ViewFields, sorted by seq, each labelled with the field's display name
+   * (buildHistoryColumnDefsFromContext). Only the view's fields are shown, in
+   * the view's order. The values still come from the
+   * ASSET_DETAILS_OTHER_DETAILS_TAB rows, whose ChildData is keyed by each
+   * field's display name (or its column name when it has none).
+   */
+  function fetchChildRepositoryViewContext(repoName, signal) {
+    const cacheKey = normalizeFieldToken(repoName);
+    if (state.otherDetailObjectContexts[cacheKey]) return state.otherDetailObjectContexts[cacheKey];
+    const promise = (async () => {
+      const candidates = [
+        ...new Set(
+          [repoName, String(repoName).replace(/\s+/g, "_"), String(repoName).replace(/\s+/g, "")]
+            .map((item) => String(item || "").trim())
+            .filter(Boolean)
+        )
+      ];
+      for (let i = 0; i < candidates.length; i += 1) {
+        const meta = await apiObjectGet(candidates[i], signal).catch(() => null);
+        const fields = Array.isArray(meta && meta.Fields) ? meta.Fields : [];
+        if (!meta || !fields.length) continue;
+        const objectID = String(meta.ObjectID || meta.ObjectId || candidates[i]).trim();
+        const viewRows = objectID ? await apiViewGet(objectID, signal).catch(() => []) : [];
+        const viewFieldsRaw = (viewRows[0] || {}).ViewFields ?? (viewRows[0] || {}).viewFields;
+        return { objectID, fields, viewFields: parseHistoryViewFields(viewFieldsRaw), meta };
+      }
+      return null;
+    })().catch(() => null);
+    state.otherDetailObjectContexts[cacheKey] = promise;
+    return promise;
+  }
+
+  // Field-name key ignoring case, spaces and punctuation, so "MACAddress",
+  // "MAC Address" and "mac_address" all match.
+  function compactFieldKey(text) {
+    return String(text == null ? "" : text).toLowerCase().replace(/[^a-z0-9]+/g, "");
+  }
+
+  // The ChildData value for one view column. The workflow keys ChildData by
+  // each field's display name (or its column name when it has none), so every
+  // name the field is known by is tried: exactly first, then ignoring case,
+  // spaces and punctuation.
+  function getChildDataValueForColumn(childData, columnDef, fields) {
+    const target = compactFieldKey(columnDef.internalName);
+    const fieldMeta = (fields || []).find((field) => compactFieldKey(normalizeFieldInternalName(field)) === target);
+    const names = [
+      fieldMeta && fieldMeta.DisplayName,
+      fieldMeta && fieldMeta.FieldName,
+      fieldMeta && fieldMeta.Name,
+      fieldMeta && fieldMeta.InternalName,
+      fieldMeta && fieldMeta.FieldInternalName,
+      columnDef.internalName,
+      columnDef.label
+    ]
+      .map((name) => String(name == null ? "" : name).trim())
+      .filter(Boolean);
+    for (let i = 0; i < names.length; i += 1) {
+      if (Object.prototype.hasOwnProperty.call(childData, names[i])) return childData[names[i]];
+    }
+    const keys = names.map(compactFieldKey).filter(Boolean);
+    const looseKey = Object.keys(childData).find((key) => keys.includes(compactFieldKey(key)));
+    return looseKey ? childData[looseKey] : null;
+  }
+
+  function buildOtherDetailSectionFromView(group, context) {
+    const defs = buildHistoryColumnDefsFromContext(context);
+    if (!defs.length) return null;
+    // The columns are exactly the view's. A view column that is one of the audit
+    // fields (Created By/Date, Modified By/Date) is read from ChildData's system
+    // keys, which differ from its display name; no such column is ever added.
+    const auditByLabel = new Map();
+    defs.forEach((def) => {
+      const auditColumn = findOtherDetailAuditColumn(def.internalName, def.label);
+      if (auditColumn) auditByLabel.set(def.label, auditColumn);
+    });
+    const rows = group.entries
+      .filter((entry) => entry.isRecord)
+      .map((entry) => {
+        const row = {};
+        defs.forEach((def) => {
+          const auditColumn = auditByLabel.get(def.label);
+          if (auditColumn) {
+            row[def.label] = getOtherDetailAuditValue(entry.childData, auditColumn) || "";
+            return;
+          }
+          const value = getChildDataValueForColumn(entry.childData, def, context.fields);
+          row[def.label] = value == null || typeof value === "object" ? "" : parseLookupLabel(value);
+        });
+        return row;
+      })
+      // A row with nothing in any of the view's columns shows as a blank line;
+      // it is left out, so a table with nothing to show reads "No Records Found".
+      .filter((row) => Object.keys(row).some((key) => String(row[key] || "").trim() !== ""));
+    return {
+      title: group.title || getObjectDisplayName(context.meta, normalizeFieldLabel(group.repoName) || group.repoName),
+      objectMeta: context.meta,
+      columnDefs: defs.map((def) => ({ internalName: def.internalName, displayName: def.label })),
+      columns: defs.map((def) => def.label),
+      // No child records for this asset: the section still shows the view's
+      // columns, with "No Records Found" instead of one empty row.
+      rows
+    };
+  }
+
+  async function buildOtherDetailSectionsFromRnspRows(rows, signal) {
     // Sections come only from repositories actually present in the RNSP
     // response — no fixed/forced list, no padding in repositories that
     // weren't returned. If the response has one ChildRepository entry, the
     // tab shows exactly one section.
-    return order.map((repoName) => {
-      const sectionRows = rowsByRepo.get(repoName);
-      const columns = buildDynamicColumnsFromRowKeys(sectionRows);
-      return {
-        title: normalizeFieldLabel(repoName) || repoName,
-        objectMeta: null,
-        columnDefs: columns.map((column) => ({ internalName: column, displayName: column })),
-        columns,
-        rows: sectionRows
-      };
-    });
+    const groups = groupOtherDetailRnspRows(rows);
+    const sections = await Promise.all(
+      groups.map(async (group) => {
+        const context = await fetchChildRepositoryViewContext(group.repoName, signal);
+        const fromView = context ? buildOtherDetailSectionFromView(group, context) : null;
+        return fromView || buildOtherDetailSectionFromData(group);
+      })
+    );
+    return sections.filter(Boolean);
   }
 
   async function loadOtherDetails(details) {
     if (!ui.otherDetailContent) return;
     bindOtherDetailGridEvents();
-    ui.otherDetailContent.innerHTML = '<p class="empty-note">Loading...</p>';
+    ui.otherDetailContent.innerHTML = buildLoaderHtml();
     const assetRecordId = String(details.recordId || "").trim();
     if (!assetRecordId) {
       renderOtherDetailSections([]);
@@ -2441,7 +3106,8 @@
     }
     try {
       const rawRows = await fetchAssetOtherDetailsRows(assetRecordId);
-      const sections = buildOtherDetailSectionsFromRnspRows(rawRows);
+      await ensureOtherDetailUserNames(rawRows);
+      const sections = await buildOtherDetailSectionsFromRnspRows(rawRows);
       renderOtherDetailSections(sections);
     } catch (_error) {
       renderOtherDetailSections([]);
@@ -2738,33 +3404,239 @@
     return rows[0] || null;
   }
 
-  function mapHistoryRow(flatRow, details) {
-    const assetLookup =
-      flatRow.Asset || flatRow.AssetID || flatRow.EAsset || flatRow.EAssetMaster || flatRow["EAsset Master"];
+  /**
+   * EAsset_History ObjectGet/ViewGet resolution - determines which columns the
+   * Audit Log grid shows (and in what order/label), independently of
+   * ASSET_DETAILS_AUDIT_LOG_RNSP_NAME which remains the row-data source. Mirrors
+   * the ObjectGet(-> Fields)/ViewGet(-> ViewFields/seq) column-metadata pattern
+   * used by the Asset Type grid, scoped here to the Audit Log tab only.
+   */
+  function parseHistoryViewFields(rawValue) {
+    const parsed = typeof rawValue === "string" ? tryParseJson(rawValue) : rawValue;
+    return Array.isArray(parsed) ? parsed : [];
+  }
+
+  function getHistoryViewFieldInternalName(viewField) {
+    return String(
+      (viewField &&
+        (viewField.FieldInternalName ||
+          viewField.InternalName ||
+          viewField.dsNm ||
+          viewField.FieldName ||
+          viewField.Name)) ||
+        ""
+    ).trim();
+  }
+
+  function getHistoryViewFieldSeq(viewField) {
+    const seq = Number(viewField && (viewField.seq ?? viewField.Seq));
+    return Number.isFinite(seq) ? seq : Number.MAX_SAFE_INTEGER;
+  }
+
+  /*
+   * Audit Log view via {base_url}/api/rnsp ViewGet_RNSP - the same view
+   * lookup the Asset Requisition list uses: the EAsset_History ObjectID is read
+   * off the ASSET_DETAILS_AUDIT_LOG rows (ObjectGet only when they carry none),
+   * the most recently modified ViewDefinition row is the live view, and its
+   * FieldMeta supplies each field's DisplayName.
+   */
+  function readHistoryObjectId(source) {
+    if (!source || typeof source !== "object") return "";
+    return String(source.ObjectID || source.ObjectId || source.objectID || source.objectId || "").trim();
+  }
+
+  function looksLikeHistoryGuid(value) {
+    return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(value || "").trim());
+  }
+
+  function historyViewEpochMs(value) {
+    const time = new Date(value).getTime();
+    return Number.isFinite(time) ? time : 0;
+  }
+
+  function parseHistoryViewJson(rawValue) {
+    let parsed = rawValue;
+    // RNSP can return ViewFields / FieldMeta double-encoded (a JSON string of a JSON string).
+    for (let depth = 0; typeof parsed === "string" && depth < 3; depth += 1) {
+      parsed = tryParseJson(parsed);
+    }
+    return Array.isArray(parsed) ? parsed : [];
+  }
+
+  function getHistoryViewFieldProp(viewField, keys) {
+    if (!viewField || typeof viewField !== "object") return "";
+    for (let i = 0; i < keys.length; i += 1) {
+      const lower = String(keys[i]).toLowerCase();
+      const matchedKey = Object.keys(viewField).find((entry) => String(entry).toLowerCase() === lower);
+      const value = matchedKey ? viewField[matchedKey] : null;
+      if (value != null && String(value).trim() !== "") return value;
+    }
+    return "";
+  }
+
+  // FieldMeta (FieldDefinition rows) -> { [lower-cased FieldID]: { displayName } }.
+  function buildHistoryFieldMetaById(rawFieldMeta) {
+    const byId = {};
+    parseHistoryViewJson(rawFieldMeta).forEach((field) => {
+      const fid = String(getHistoryViewFieldProp(field, ["FieldID", "fid"]) || "").trim().toLowerCase();
+      if (!fid) return;
+      byId[fid] = { displayName: String(getHistoryViewFieldProp(field, ["DisplayName"]) || "").trim() };
+    });
+    return byId;
+  }
+
+  async function fetchHistoryViewGetRnsp(objectID, signal) {
+    const rows = await fetchRnspRows(VIEW_GET_RNSP_NAME, { ObjectID: objectID }, signal, { allBatches: true });
+    // More than one ViewDefinition row can come back; the most recently
+    // modified one is the live view (a stale row would still list columns
+    // that have since been disabled in the repository).
+    let best = null;
+    (Array.isArray(rows) ? rows : []).forEach((row) => {
+      if (!row || (row.ViewFields == null && row.viewFields == null)) return;
+      if (!best || historyViewEpochMs(row.LastModifiedDate) >= historyViewEpochMs(best.LastModifiedDate)) best = row;
+    });
+    const first = best || {};
+    return {
+      viewFields: parseHistoryViewJson(first.ViewFields != null ? first.ViewFields : first.viewFields),
+      fieldMetaById: buildHistoryFieldMetaById(first.FieldMeta != null ? first.FieldMeta : first.fieldMeta)
+    };
+  }
+
+  async function fetchHistoryObjectContext(rawRows, signal) {
+    if (state.historyObjectContext) return state.historyObjectContext;
+    let objectID = "";
+    const rows = Array.isArray(rawRows) ? rawRows : [];
+    for (let i = 0; !objectID && i < rows.length; i += 1) objectID = readHistoryObjectId(rows[i]);
+    if (!objectID) {
+      const meta = await apiObjectGet(HISTORY_REPOSITORY.repositoryObjectKey, signal).catch(() => null);
+      objectID = readHistoryObjectId(meta) || HISTORY_REPOSITORY.repositoryObjectKey;
+    }
+    const view = await fetchHistoryViewGetRnsp(objectID, signal);
+    const context = { objectID, viewFields: view.viewFields, fieldMetaById: view.fieldMetaById };
+    if (context.viewFields.length) state.historyObjectContext = context;
+    return context;
+  }
+
+  /**
+   * Audit Log columns from the ViewGet_RNSP view: every non-child (dtp !==
+   * "TBL") field, ordered by seq. The data key is `fid` when it is a real
+   * field name (system/audit entries such as CreatedByName), otherwise
+   * `dsNm`; the header is the field's FieldMeta DisplayName, then dsNm/dn.
+   */
+  function buildHistoryColumnDefsFromViewRnsp(context) {
+    const viewFields = (context && context.viewFields) || [];
+    const metaById = (context && context.fieldMetaById) || {};
+    const seen = new Set();
+    const defs = [];
+    viewFields
+      .slice()
+      .sort((a, b) => getHistoryViewFieldSeq(a) - getHistoryViewFieldSeq(b))
+      .forEach((viewField) => {
+        const dtp = String(getHistoryViewFieldProp(viewField, ["dtp", "DataType"]) || "").trim().toUpperCase();
+        if (dtp === "TBL") return;
+        const fid = String(getHistoryViewFieldProp(viewField, ["fid"]) || "").trim();
+        const internalName =
+          fid && !looksLikeHistoryGuid(fid) ? fid : getHistoryViewFieldInternalName(viewField);
+        if (!internalName) return;
+        const token = normalizeFieldToken(internalName);
+        if (!token || seen.has(token)) return;
+        seen.add(token);
+        const meta = metaById[fid.toLowerCase()];
+        const label =
+          (meta && meta.displayName) ||
+          String(getHistoryViewFieldProp(viewField, ["dsNm", "dn", "DisplayName"]) || "").trim() ||
+          normalizeFieldLabel(internalName);
+        defs.push({ internalName, label });
+      });
+    return defs;
+  }
+
+  function buildHistoryColumnDefsFromContext(context) {
+    const viewFields = (context && context.viewFields) || [];
+    if (!viewFields.length) return [];
+    const fields = (context && context.fields) || [];
+    const sorted = viewFields
+      .slice()
+      .sort((a, b) => getHistoryViewFieldSeq(a) - getHistoryViewFieldSeq(b));
+    const seen = new Set();
+    const defs = [];
+    sorted.forEach((viewField) => {
+      const internalName = getHistoryViewFieldInternalName(viewField);
+      if (!internalName) return;
+      const token = normalizeFieldToken(internalName);
+      if (!token || seen.has(token)) return;
+      seen.add(token);
+      const label = getFieldDisplayName({ Fields: fields }, internalName) || normalizeFieldLabel(internalName);
+      defs.push({ internalName, label });
+    });
+    return defs;
+  }
+
+  function getHistoryColumnValue(flatRow, details, columnDef) {
+    const internalName = columnDef.internalName;
+    const label = columnDef.label;
+    const token = normalizeFieldToken(label || internalName);
+    const aliases = [internalName, label].filter(Boolean);
+    if (token === "asset") {
+      const assetLookup =
+        flatRow.Asset || flatRow.AssetID || flatRow.EAsset || flatRow.EAssetMaster || flatRow["EAsset Master"];
+      return (
+        parseLookupLabel(assetLookup) ||
+        getValue(flatRow, ["AssetName"]) ||
+        details.assetName ||
+        details.serialNumber ||
+        ""
+      );
+    }
+    if (token === "employees" || token === "employee") {
+      const rawEmployee = getAllocationValueLoose(flatRow, [
+        ...aliases,
+        "Employee",
+        "EmployeeName",
+        "AssignedTo",
+        "User",
+        "Users"
+      ]);
+      return formatAllocationEmployeeValue(rawEmployee) || "";
+    }
+    if (token === "action date") {
+      return getAllocationValueLoose(flatRow, [...aliases, "ActionDate", "Created Date", "CreatedDate"]) || "";
+    }
+    if (token === "status") {
+      return getAllocationValueLoose(flatRow, [...aliases, "ActionStatus", "ItemStatus", "Event", "Action"]) || "";
+    }
+    if (token === "comments" || token === "comment") {
+      return getAllocationValueLoose(flatRow, [...aliases, "Comments", "Comment"]) || "";
+    }
+    return getAllocationValueLoose(flatRow, aliases) || "";
+  }
+
+  function mapHistoryRow(flatRow, details, columnDefs) {
+    const defs = Array.isArray(columnDefs) && columnDefs.length ? columnDefs : HISTORY_DEFAULT_COLUMN_DEFS;
     const out = {};
-    out.Asset =
-      parseLookupLabel(assetLookup) ||
-      getValue(flatRow, ["AssetName"]) ||
-      details.assetName ||
-      details.serialNumber ||
-      "";
-    const rawEmployee = getAllocationValueLoose(flatRow, ["Employees", "Employee", "EmployeeName", "AssignedTo", "User", "Users"]);
-    out.Employees = formatAllocationEmployeeValue(rawEmployee) || "";
-    out["Action Date"] =
-      getAllocationValueLoose(flatRow, ["ActionDate", "Action Date", "Created Date", "CreatedDate"]) ||
-      "";
-    out.Status = getAllocationValueLoose(flatRow, ["Status", "ActionStatus", "ItemStatus", "Event", "Action"]) || "";
-    out.Comments = getAllocationValueLoose(flatRow, ["Comments", "Comment"]) || "";
+    defs.forEach((columnDef) => {
+      out[columnDef.label] = getHistoryColumnValue(flatRow, details, columnDef);
+    });
     return out;
   }
 
   async function fetchRepositoryHistoryRows(repoConfig, details, signal) {
     const rawRows = await fetchAssetAuditLogRows(details.recordId, signal);
     const filteredRows = rawRows.map((row) => flattenRecord(row));
-    const mappedRows = filteredRows.map((row) => mapHistoryRow(row, details));
+
+    let columnDefs = HISTORY_DEFAULT_COLUMN_DEFS;
+    try {
+      const context = await fetchHistoryObjectContext(rawRows, signal);
+      const dynamicDefs = buildHistoryColumnDefsFromViewRnsp(context);
+      if (dynamicDefs.length) columnDefs = dynamicDefs;
+    } catch (_error) {
+      // Keep the default column set if the ViewGet_RNSP resolution fails.
+    }
+
+    const mappedRows = filteredRows.map((row) => mapHistoryRow(row, details, columnDefs));
     const columns = buildDynamicColumnsFromRows(
       mappedRows,
-      ["Asset", "Employees", "Action Date", "Status", "Comments"]
+      columnDefs.map((columnDef) => columnDef.label)
     );
     return { rows: mappedRows, columns };
   }
@@ -2800,10 +3672,8 @@
     const text = String(raw == null ? "" : raw).trim();
     if (!text) return "";
     if (isHistoryDateColumn(column)) {
-      return formatCellDisplayMarkup(raw, {
-        columnLabel: column,
-        includeSeconds: true
-      });
+      // Audit Log date columns show the calendar date only - never a time.
+      return escapeHtml(formatUserDate(raw));
     }
     return escapeHtml(text);
   }
@@ -2883,7 +3753,10 @@
               ? "↑"
               : "↓"
             : "↕";
-        return `<th class="is-sortable" data-history-sort-index="${index}" data-history-sort-key="${escapeHtml(
+        // .is-sorted is what keeps the glyph visible once a column is sorted
+        // (global.css reveals it on th:hover, th:focus-within or th.is-sorted).
+        const sortedClass = activeKey === column ? " is-sorted" : "";
+        return `<th class="is-sortable${sortedClass}" data-history-sort-index="${index}" data-history-sort-key="${escapeHtml(
           column
         )}"><span class="th-label">${escapeHtml(column)}</span><span class="th-sort-icon" aria-hidden="true">${arrow}</span></th>`;
       })
@@ -2895,7 +3768,8 @@
     const cols = Array.isArray(columns) ? columns : [];
     if (!sortedRows.length) {
       ui.historyLogTableBody.innerHTML =
-        `<tr><td colspan="${Math.max(cols.length, 1)}" class="history-log-empty">No Record Found</td></tr>`;
+        buildTableMessageRowHtml(cols.length, "No Record Found");
+      syncTableMessageWidths();
       return;
     }
     ui.historyLogTableBody.innerHTML = sortedRows
@@ -2930,7 +3804,7 @@
     const sortedRows = getSortedHistoryRows(sourceRows, columns);
     renderHistoryTableHead(columns);
     renderHistoryTableBody(sortedRows, columns);
-    refreshSerialGridTable(ui.historyLogTable, { resizeStorageKey: HISTORY_TABLE_RESIZE_KEY });
+    refreshSerialGridTable(ui.historyLogTable);
   }
 
   function renderHistoryRows(dataset) {
@@ -2976,6 +3850,7 @@
   function bindHistoryGridEvents() {
     if (historyGridEventsBound) return;
     historyGridEventsBound = true;
+    bindHistoryColumnFit();
     ui.historyLogSection?.addEventListener("click", onHistorySectionClick);
     ui.historyCommentModal?.addEventListener("click", (event) => {
       if (event.target.closest(".history-comment-modal__close")) {
@@ -3005,8 +3880,9 @@
         : HISTORY_DEFAULT_COLUMNS;
       renderHistoryTableHead(loadingColumns);
       ui.historyLogTableBody.innerHTML =
-        `<tr><td colspan="${Math.max(loadingColumns.length, 1)}" class="history-log-empty">Loading...</td></tr>`;
-      refreshSerialGridTable(ui.historyLogTable, { resizeStorageKey: HISTORY_TABLE_RESIZE_KEY });
+        buildTableLoadingRowHtml(loadingColumns.length);
+      syncTableMessageWidths();
+      refreshSerialGridTable(ui.historyLogTable);
     }
     const assetRecordId = String(details.recordId || "").trim();
     if (!assetRecordId) {
@@ -3253,16 +4129,63 @@
   }
 
   /* ------------------------------------------------------------------
-     Asset Dependency tab
+     Asset Relationship tab
+
+     Top-down tree: the opened asset is at the top and each level of
+     related assets sits below its parent, laid out horizontally. Built to
+     stay readable with hundreds of children under one asset:
+       - a node's children are grouped under one pill per relationship
+         type ("Has Installed · 400"), so the label is drawn once;
+       - a large set of siblings wraps into rows under a shared connector
+         instead of one endless row (row width follows the viewport);
+       - big groups are paged ("Show N more" / "Show all");
+       - deeper levels start collapsed and open from the count badge.
+     Plain DOM + SVG only: no third-party library.
   ------------------------------------------------------------------ */
 
+  /* Used by buildDependencyGraphModel for its node records. */
   const DEPENDENCY_DEFAULT_NODE_HALF_W = 115;
   const DEPENDENCY_DEFAULT_NODE_HALF_H = 32;
-  const DEPENDENCY_ARROW_GAP = 6;
-  const DEPENDENCY_LABEL_OFFSET = 12;
-  /* Smallest vertical distance any child node may have from the pinned
-     parent node, so the parent always reads as the top of the graph. */
-  const DEPENDENCY_MIN_CHILD_GAP_Y = 120;
+
+  /* Box sizes and spacing of the tree layout, in world pixels. */
+  const DEP_LAYOUT = {
+    rootW: 240,
+    rootH: 56,
+    nodeW: 196,
+    nodeH: 52,
+    groupW: 176,
+    groupH: 30,
+    // Between sibling boxes in a row, and between groups of one asset.
+    siblingGapX: 16,
+    groupGapX: 48,
+    // Asset bottom -> its relationship pill.
+    assetToGroup: 34,
+    // Room above each row for its horizontal connector line.
+    busSpace: 36,
+    // Extra space between two wrapped rows.
+    rowGap: 14,
+    // Left margin of a wrapped block, where the shared trunk runs down.
+    trunkPad: 22,
+    cornerRadius: 8,
+    padding: 40
+  };
+  /* Columns per row: as many boxes as fit the viewport at DEP_FOCUS_SCALE. */
+  const DEP_MIN_COLUMNS = 4;
+  const DEP_MAX_COLUMNS = 12;
+  const DEP_DEFAULT_COLUMNS = 8;
+  /* A page of children is this many full rows ("Show more" adds a page). */
+  const DEP_PAGE_ROWS = 5;
+  /* First load opens whole levels while the visible tree stays under this
+     many boxes, so a big graph starts compact. */
+  const DEP_INITIAL_VISIBLE_BUDGET = 150;
+  const DEP_MIN_SCALE = 0.05;
+  const DEP_MAX_SCALE = 2;
+  /* Below this fit scale the labels are unreadable, so the first view
+     zooms to the root instead of squeezing the whole tree in. */
+  const DEP_READABLE_SCALE = 0.6;
+  const DEP_FOCUS_SCALE = 0.85;
+  const DEP_UNLINKED_GROUP_KEY = "unlinked";
+  const DEP_SVG_NS = "http://www.w3.org/2000/svg";
 
   async function fetchAssetDependencyRows(recordId, signal) {
     const base = getRnspBaseUrl();
@@ -3326,7 +4249,23 @@
     // match the asset's plain Name field exactly).
     const normalizedRootName = String(rootName || "").trim();
 
+    // New Asset_Dependency shape: the Depth 0 row IS the selected/root asset
+    // (not an edge); only Depth >= 1 rows are relationships.
+    const getRowDepth = (row) => {
+      const raw = getValue(row, ["Depth"]);
+      const parsed = parseInt(raw != null && raw !== "" ? raw : row && row.Depth, 10);
+      return Number.isFinite(parsed) ? parsed : null;
+    };
+    const getChildName = (row) =>
+      String(getValue(row, ["ChildAsset", "Child Asset"]) || (row && row.ChildAsset) || "").trim();
+    const rootRow = list.find((row) => getRowDepth(row) === 0 && getChildName(row)) || null;
+    const rootRowName = rootRow ? getChildName(rootRow) : "";
+
     list.forEach((row) => {
+      if (rootRow) {
+        const rowDepth = getRowDepth(row);
+        if (rowDepth !== null && rowDepth < 1) return;
+      }
       const sourceName =
         getValue(row, ["SourceAsset", "Source Asset"]) || row.SourceAsset || "";
       const childName =
@@ -3338,6 +4277,11 @@
       if (!sourceNode || !childNode) return;
       edges.push({ source: sourceNode.id, target: childNode.id, label: String(label || "").trim() });
     });
+
+    // The Depth 0 row is authoritative for the root; register it even when
+    // it has no relationships.
+    let rootFromRow = null;
+    if (rootRowName) rootFromRow = ensureNode(rootRowName);
 
     let nodes = Array.from(nodesByName.values());
     if (!nodes.length) {
@@ -3351,8 +4295,8 @@
     // an exact match isn't always possible. Try progressively looser
     // matches against the REAL nodes already in the graph first.
     const normalizedRoot = normalizedRootName.toLowerCase();
-    let root = null;
-    if (normalizedRoot) {
+    let root = rootFromRow;
+    if (!root && normalizedRoot) {
       // 1) Exact match (case/whitespace-insensitive).
       root = nodes.find((node) => node.name.trim().toLowerCase() === normalizedRoot);
 
@@ -3374,7 +4318,7 @@
       }
     }
 
-    if (!root && normalizedRootName) {
+    if (!root && normalizedRootName && !rootRow) {
       // Nothing in the fetched relationship rows even loosely resembles
       // the current asset — as a last resort, register it as its own
       // (currently unconnected) root rather than letting a different node
@@ -3460,263 +4404,950 @@
     return { nodes, edges, rootId: root.id, levels };
   }
 
-  /* ---------------- Layout algorithms for the 3 view modes ---------------- */
+  /* ---------------- Relationship tree model ---------------- */
 
-  /* The parent (source) asset is always the top-most node: every layout
-     places level 0 above level 1, level 1 above level 2, and so on. */
-  function layoutDependencyView(model) {
-    const LEVEL_GAP_Y = 200;
-    const NODE_GAP_X = 280;
-    const START_Y = 160;
-    const CENTER_X = 1200;
-
-    (model.levels || []).forEach((levelNodes, levelIndex) => {
-      if (!levelNodes || !levelNodes.length) return;
-      const totalWidth = (levelNodes.length - 1) * NODE_GAP_X;
-      levelNodes.forEach((node, index) => {
-        node.y = START_Y + levelIndex * LEVEL_GAP_Y;
-        node.x = CENTER_X - totalWidth / 2 + index * NODE_GAP_X;
-      });
-    });
+  function compareDependencyText(a, b) {
+    return String(a || "").localeCompare(String(b || ""), undefined, { numeric: true, sensitivity: "base" });
   }
 
-  function layoutHierarchyView(model) {
-    const LEVEL_GAP_Y = 190;
-    const NODE_GAP_X = 260;
-    const START_Y = 140;
-    const CENTER_X = 1200;
-
-    (model.levels || []).forEach((levelNodes, levelIndex) => {
-      if (!levelNodes || !levelNodes.length) return;
-      const totalWidth = (levelNodes.length - 1) * NODE_GAP_X;
-      levelNodes.forEach((node, index) => {
-        node.y = START_Y + levelIndex * LEVEL_GAP_Y;
-        node.x = CENTER_X - totalWidth / 2 + index * NODE_GAP_X;
-      });
-    });
+  function pluralizeDependency(count, word) {
+    return `${count} ${word}${count === 1 ? "" : "s"}`;
   }
 
-  function layoutNetworkView(model) {
-    const CENTER_X = 1200;
-    const ROOT_Y = 200;
-    const RADIUS_STEP = 300;
+  function formatDependencyCount(count) {
+    return count > 999 ? "999+" : String(count);
+  }
 
-    (model.levels || []).forEach((levelNodes, levelIndex) => {
-      if (!levelNodes || !levelNodes.length) return;
-      if (levelIndex === 0) {
-        // The parent asset is pinned to the top of the graph.
-        levelNodes.forEach((node) => {
-          node.x = CENTER_X;
-          node.y = ROOT_Y;
-        });
-        return;
-      }
-      // Remaining levels fan out on arcs below the parent, never above it.
-      const radius = levelIndex * RADIUS_STEP;
-      const count = levelNodes.length;
-      const spread = Math.PI * 0.8;
-      const start = Math.PI / 2 - spread / 2;
-      levelNodes.forEach((node, index) => {
-        const angle = count === 1 ? Math.PI / 2 : start + (spread * index) / (count - 1);
-        node.x = CENTER_X + radius * Math.cos(angle);
-        node.y = ROOT_Y + radius * Math.sin(angle);
+  /* AssetName / SerialNumber per ChildAsset, so a node can show its short
+     asset name with the serial underneath instead of the long composite
+     "<serial>-<name>" text. */
+  function getDependencyRowAssetInfo(rows) {
+    const info = new Map();
+    (Array.isArray(rows) ? rows : []).forEach((row) => {
+      const id = String(getValue(row, ["ChildAsset", "Child Asset"]) || (row && row.ChildAsset) || "").trim();
+      if (!id || info.has(id)) return;
+      info.set(id, {
+        assetName: String(getValue(row, ["AssetName", "Asset Name"]) || "").trim(),
+        serial: String(getValue(row, ["SerialNumber", "Serial Number"]) || "").trim()
       });
     });
+    return info;
   }
 
   /**
-   * Safety net for every layout: guarantees the parent (root) node stays
-   * strictly above all other nodes and horizontally centered over them, so
-   * it can never end up beside or below its children.
+   * Turns the graph model (nodes + directed edges + rootId) into a spanning
+   * tree rooted at the opened asset. Edges are walked in both directions so
+   * an asset that points AT the root still hangs under it (its group is
+   * marked incoming). An asset reachable along several paths is placed once,
+   * under the first parent found; the other connections are kept in `links`
+   * and listed in its details popup. Assets with no path to the root are
+   * gathered under a "Not linked to this asset" group on the root.
    */
-  function enforceRootOnTop(model) {
-    if (!model || !Array.isArray(model.nodes) || !model.rootId) return;
-    const root = model.nodes.find((node) => node.id === model.rootId);
-    if (!root) return;
-    const others = model.nodes.filter((node) => node.id !== model.rootId);
-    if (!others.length) return;
+  function buildDependencyTree(model, rows) {
+    const modelNodes = model && Array.isArray(model.nodes) ? model.nodes : [];
+    if (!modelNodes.length || !model.rootId) return null;
 
-    const MIN_GAP_Y = 150;
-    let minY = Infinity;
-    let minX = Infinity;
-    let maxX = -Infinity;
-    others.forEach((node) => {
-      if (node.y < minY) minY = node.y;
-      if (node.x < minX) minX = node.x;
-      if (node.x > maxX) maxX = node.x;
+    const assetInfo = getDependencyRowAssetInfo(rows);
+    const byId = new Map();
+    modelNodes.forEach((modelNode) => {
+      const info = assetInfo.get(modelNode.id) || {};
+      const assetName = info.assetName || "";
+      const serial = info.serial || "";
+      byId.set(modelNode.id, {
+        id: modelNode.id,
+        title: assetName || modelNode.name,
+        subtitle: assetName && serial && serial !== assetName ? serial : "",
+        serial,
+        depth: 0,
+        parentId: null,
+        relation: null,
+        groups: [],
+        links: [],
+        descendants: 0
+      });
+    });
+    if (!byId.has(model.rootId)) return null;
+
+    const adjacency = new Map();
+    byId.forEach((_node, id) => adjacency.set(id, []));
+    (model.edges || []).forEach((edge) => {
+      if (edge.source === edge.target) return;
+      if (!byId.has(edge.source) || !byId.has(edge.target)) return;
+      const label = String(edge.label || "").trim();
+      adjacency.get(edge.source).push({ to: edge.target, label, dir: "out" });
+      adjacency.get(edge.target).push({ to: edge.source, label, dir: "in" });
+    });
+    // Outgoing links first, so A -> B is shown from A's side when both
+    // directions could claim the same asset.
+    adjacency.forEach((links) => links.sort((a, b) => (a.dir === b.dir ? 0 : a.dir === "out" ? -1 : 1)));
+
+    const visited = new Set();
+
+    function attach(parent, child, label, dir, groupKey) {
+      const key = groupKey || dir + "|" + label;
+      let group = parent.groups.find((item) => item.key === key);
+      if (!group) {
+        group = { key, label, dir, children: [] };
+        parent.groups.push(group);
+      }
+      group.children.push(child.id);
+      child.parentId = parent.id;
+      child.depth = parent.depth + 1;
+      child.relation = { label, dir, groupKey: key };
+    }
+
+    function walk(startId) {
+      const queue = [startId];
+      visited.add(startId);
+      for (let i = 0; i < queue.length; i += 1) {
+        const current = byId.get(queue[i]);
+        let parentLinkSkipped = false;
+        adjacency.get(current.id).forEach((link) => {
+          // The tree edge itself, seen from the child's side.
+          if (!parentLinkSkipped && link.to === current.parentId) {
+            parentLinkSkipped = true;
+            return;
+          }
+          if (visited.has(link.to)) {
+            if (!current.links.some((item) => item.to === link.to)) current.links.push(link);
+            return;
+          }
+          visited.add(link.to);
+          attach(current, byId.get(link.to), link.label, link.dir);
+          queue.push(link.to);
+        });
+      }
+    }
+
+    const root = byId.get(model.rootId);
+    walk(root.id);
+    byId.forEach((node) => {
+      if (visited.has(node.id)) return;
+      attach(root, node, "", "none", DEP_UNLINKED_GROUP_KEY);
+      walk(node.id);
     });
 
-    if (root.y > minY - MIN_GAP_Y) root.y = minY - MIN_GAP_Y;
-    root.x = (minX + maxX) / 2;
+    const groupRank = (group) => (group.key === DEP_UNLINKED_GROUP_KEY ? 2 : group.dir === "in" ? 1 : 0);
+
+    // Sorts groups and children (by name) and counts descendants.
+    function finish(node) {
+      node.groups.sort((a, b) => groupRank(a) - groupRank(b) || compareDependencyText(a.label, b.label));
+      node.descendants = 0;
+      node.groups.forEach((group) => {
+        group.children.sort((a, b) => compareDependencyText(byId.get(a).title, byId.get(b).title));
+        group.children.forEach((childId) => {
+          const child = byId.get(childId);
+          finish(child);
+          node.descendants += 1 + child.descendants;
+        });
+      });
+    }
+    finish(root);
+
+    return { rootId: root.id, byId };
   }
 
-  function applyDependencyLayout(model, view) {
-    if (!model || !model.levels) return;
-    if (view === "hierarchy") {
-      layoutHierarchyView(model);
-    } else if (view === "network") {
-      layoutNetworkView(model);
-    } else {
-      layoutDependencyView(model);
+  function getDependencyGroupLabel(group) {
+    if (group.key === DEP_UNLINKED_GROUP_KEY) return "Not linked to this asset";
+    return group.label || "Related to";
+  }
+
+  function getDependencyGroupId(nodeId, groupKey) {
+    return nodeId + "\u0001" + groupKey;
+  }
+
+  function getDependencyPageSize() {
+    return (state.dependencyGraph.columns || DEP_DEFAULT_COLUMNS) * DEP_PAGE_ROWS;
+  }
+
+  function getDependencyGroupLimit(groupId) {
+    return (state.dependencyGraph.pageCounts.get(groupId) || 1) * getDependencyPageSize();
+  }
+
+  /* Opens whole levels, top down, while the number of visible boxes stays
+     within `budget`, so siblings are never half open and half closed.
+     The root is always open. */
+  function expandDependencyLevels(budget) {
+    const tree = state.dependencyGraph.tree;
+    const expanded = new Set([tree.rootId]);
+    const visibleChildren = (node) => {
+      const ids = [];
+      node.groups.forEach((group) => {
+        group.children
+          .slice(0, getDependencyGroupLimit(getDependencyGroupId(node.id, group.key)))
+          .forEach((id) => ids.push(id));
+      });
+      return ids;
+    };
+    const openCost = (node) => node.groups.length + visibleChildren(node).length;
+    const root = tree.byId.get(tree.rootId);
+    let visible = 1 + openCost(root);
+    let frontier = visibleChildren(root);
+    while (frontier.length) {
+      const openable = frontier.map((id) => tree.byId.get(id)).filter((node) => node.groups.length);
+      const levelCost = openable.reduce((sum, node) => sum + openCost(node), 0);
+      if (!openable.length || visible + levelCost > budget) break;
+      visible += levelCost;
+      const next = [];
+      openable.forEach((node) => {
+        expanded.add(node.id);
+        visibleChildren(node).forEach((childId) => next.push(childId));
+      });
+      frontier = next;
     }
-    // Applies to every view: the opened (parent) asset is pinned above all
-    // other nodes so relationships always flow downward from it.
-    enforceRootOnTop(model);
+    return expanded;
+  }
+
+  /* ---------------- Visible tree + layout ---------------- */
+
+  /* The part of the tree currently on screen, as layout items: asset
+     boxes, relationship-group pills and "show more" boxes. */
+  function buildDependencyVisibleTree() {
+    const g = state.dependencyGraph;
+    const tree = g.tree;
+    const L = DEP_LAYOUT;
+
+    function assetItem(id) {
+      const node = tree.byId.get(id);
+      const isRoot = id === tree.rootId;
+      const childCount = node.groups.reduce((sum, group) => sum + group.children.length, 0);
+      const item = {
+        kind: "asset",
+        key: "a:" + id,
+        nodeId: id,
+        w: isRoot ? L.rootW : L.nodeW,
+        h: isRoot ? L.rootH : L.nodeH,
+        childCount,
+        expanded: childCount > 0 && g.expanded.has(id),
+        children: []
+      };
+      if (item.expanded) node.groups.forEach((group) => item.children.push(groupItem(node, group)));
+      return item;
+    }
+
+    function groupItem(node, group) {
+      const groupId = getDependencyGroupId(node.id, group.key);
+      const item = {
+        kind: "group",
+        key: "g:" + groupId,
+        groupId,
+        group,
+        w: L.groupW,
+        h: L.groupH,
+        collapsed: g.collapsedGroups.has(groupId),
+        children: []
+      };
+      if (item.collapsed) return item;
+      const limit = getDependencyGroupLimit(groupId);
+      group.children.slice(0, limit).forEach((childId) => item.children.push(assetItem(childId)));
+      const remaining = group.children.length - item.children.length;
+      if (remaining > 0) {
+        item.children.push({
+          kind: "more",
+          key: "m:" + groupId,
+          groupId,
+          remaining,
+          w: L.nodeW,
+          h: L.nodeH,
+          children: []
+        });
+      }
+      return item;
+    }
+
+    return assetItem(tree.rootId);
+  }
+
+  /**
+   * Top-down layout, two passes:
+   *  1. measure: every item gets the size of its whole subtree. A group's
+   *     children flow left to right and wrap into a new row once a row
+   *     would exceed `columns` boxes of width (subtrees count by width);
+   *  2. place: boxes are centred over their subtree, rows are stacked
+   *     under the group pill with room for a connector above each row.
+   * Linear in the number of items.
+   */
+  function layoutDependencyTree(rootItem, columns) {
+    const L = DEP_LAYOUT;
+    const maxRowW = columns * L.nodeW + (columns - 1) * L.siblingGapX;
+
+    function measure(item) {
+      if (item.kind === "asset") {
+        let groupsW = 0;
+        let groupsH = 0;
+        item.children.forEach((child, index) => {
+          measure(child);
+          groupsW += child.subW + (index ? L.groupGapX : 0);
+          groupsH = Math.max(groupsH, child.subH);
+        });
+        item.groupsW = groupsW;
+        item.subW = Math.max(item.w, groupsW);
+        item.subH = item.h + (item.children.length ? L.assetToGroup + groupsH : 0);
+        return;
+      }
+      if (item.kind === "more") {
+        item.subW = item.w;
+        item.subH = item.h;
+        return;
+      }
+      const rows = [];
+      let row = null;
+      item.children.forEach((child) => {
+        measure(child);
+        if (!row || row.w + L.siblingGapX + child.subW > maxRowW) {
+          row = { items: [], w: 0, h: 0 };
+          rows.push(row);
+        }
+        row.w += (row.items.length ? L.siblingGapX : 0) + child.subW;
+        row.h = Math.max(row.h, child.subH);
+        row.items.push(child);
+      });
+      item.rows = rows;
+      // Wrapped rows get a left margin for the trunk that feeds them.
+      item.trunkPad = rows.length > 1 ? L.trunkPad : 0;
+      item.blockW = rows.reduce((max, r) => Math.max(max, r.w), 0) + item.trunkPad;
+      item.subW = Math.max(item.w, item.blockW);
+      item.subH = rows.reduce((h, r, index) => h + (index ? L.rowGap : 0) + L.busSpace + r.h, item.h);
+    }
+
+    const items = [];
+    const byKey = new Map();
+    const parentOf = new Map();
+    let assetCount = 0;
+
+    function place(item, left, top, parent) {
+      items.push(item);
+      byKey.set(item.key, item);
+      if (parent) parentOf.set(item.key, parent.key);
+      if (item.kind === "asset") assetCount += 1;
+      item.x = left + (item.subW - item.w) / 2;
+      item.y = top;
+
+      if (item.kind === "asset" && item.children.length) {
+        let x = left + (item.subW - item.groupsW) / 2;
+        const groupTop = top + item.h + L.assetToGroup;
+        item.children.forEach((child) => {
+          place(child, x, groupTop, item);
+          x += child.subW + L.groupGapX;
+        });
+      } else if (item.kind === "group" && item.rows.length) {
+        const blockLeft = left + (item.subW - item.blockW) / 2;
+        item.trunkX = blockLeft + item.trunkPad / 2;
+        let y = top + item.h;
+        item.rows.forEach((row, index) => {
+          y += (index ? L.rowGap : 0) + L.busSpace;
+          row.busY = y - L.busSpace / 2;
+          let x = blockLeft + item.trunkPad;
+          row.items.forEach((child) => {
+            child.rowIndex = index;
+            child.busY = row.busY;
+            place(child, x, y, item);
+            x += child.subW + L.siblingGapX;
+          });
+          y += row.h;
+        });
+        item.firstBusY = item.rows[0].busY;
+      }
+    }
+
+    measure(rootItem);
+    place(rootItem, L.padding, L.padding, null);
+
+    return {
+      items,
+      byKey,
+      parentOf,
+      assetCount,
+      width: Math.ceil(rootItem.subW + L.padding * 2),
+      height: Math.ceil(rootItem.subH + L.padding * 2)
+    };
+  }
+
+  /* SVG path through `points` with rounded corners. Straight runs that
+     continue in the same direction are merged first. */
+  function buildDependencyPolyline(points) {
+    const pts = [];
+    points.forEach((p) => {
+      const last = pts[pts.length - 1];
+      if (last && Math.abs(last.x - p.x) < 0.5 && Math.abs(last.y - p.y) < 0.5) return;
+      const prev = pts[pts.length - 2];
+      if (prev && last) {
+        const sameX = Math.abs(prev.x - last.x) < 0.5 && Math.abs(last.x - p.x) < 0.5;
+        const sameY = Math.abs(prev.y - last.y) < 0.5 && Math.abs(last.y - p.y) < 0.5;
+        if (sameX || sameY) pts.pop();
+      }
+      pts.push(p);
+    });
+    if (pts.length < 2) return "";
+    let d = `M${pts[0].x},${pts[0].y}`;
+    for (let i = 1; i < pts.length - 1; i += 1) {
+      const a = pts[i - 1];
+      const b = pts[i];
+      const c = pts[i + 1];
+      const lenIn = Math.hypot(b.x - a.x, b.y - a.y);
+      const lenOut = Math.hypot(c.x - b.x, c.y - b.y);
+      const r = Math.min(DEP_LAYOUT.cornerRadius, lenIn / 2, lenOut / 2);
+      const inX = b.x - ((b.x - a.x) / lenIn) * r;
+      const inY = b.y - ((b.y - a.y) / lenIn) * r;
+      const outX = b.x + ((c.x - b.x) / lenOut) * r;
+      const outY = b.y + ((c.y - b.y) / lenOut) * r;
+      d += ` L${inX},${inY} Q${b.x},${b.y} ${outX},${outY}`;
+    }
+    const end = pts[pts.length - 1];
+    return d + ` L${end.x},${end.y}`;
+  }
+
+  /* Connector from a parent item to one child item. Group -> child runs
+     down to the row's connector line; wrapped rows are fed by a trunk on
+     the block's left edge, so lines never cross boxes. */
+  function getDependencyEdgePoints(parent, child) {
+    const childX = child.x + child.w / 2;
+    const childTop = child.y - 1;
+    const startX = parent.x + parent.w / 2;
+    const startY = parent.y + parent.h;
+    if (parent.kind === "asset") {
+      const midY = startY + DEP_LAYOUT.assetToGroup / 2;
+      return [
+        { x: startX, y: startY },
+        { x: startX, y: midY },
+        { x: childX, y: midY },
+        { x: childX, y: childTop }
+      ];
+    }
+    const points = [{ x: startX, y: startY }, { x: startX, y: parent.firstBusY }];
+    if (child.rowIndex > 0) {
+      points.push({ x: parent.trunkX, y: parent.firstBusY });
+      points.push({ x: parent.trunkX, y: child.busY });
+    }
+    points.push({ x: childX, y: child.busY });
+    points.push({ x: childX, y: childTop });
+    return points;
   }
 
   /* ---------------- Rendering ---------------- */
 
-  /**
-   * Finds the point where a ray from a rectangle's center (defined by
-   * halfW/halfH) toward (dx, dy) exits the rectangle, plus an optional gap.
-   * Used so edge lines/arrowheads stop at each node's border instead of
-   * running into its center, and never overlap the node or its label.
-   */
-  function clipPointAtRectBoundary(centerX, centerY, halfW, halfH, dx, dy, gap) {
-    const w = halfW + (gap || 0);
-    const h = halfH + (gap || 0);
-    if (dx === 0 && dy === 0) return { x: centerX, y: centerY };
-    const tX = dx !== 0 ? w / Math.abs(dx) : Infinity;
-    const tY = dy !== 0 ? h / Math.abs(dy) : Infinity;
-    const t = Math.min(tX, tY);
-    return { x: centerX + dx * t, y: centerY + dy * t };
-  }
+  function createDependencyItemElement(item) {
+    const tree = state.dependencyGraph.tree;
+    const el = document.createElement("div");
+    el.dataset.key = item.key;
+    el.style.left = `${item.x}px`;
+    el.style.top = `${item.y}px`;
+    el.style.width = `${item.w}px`;
+    el.style.height = `${item.h}px`;
 
-  function renderDependencyEdges(model) {
-    if (!ui.dependencyEdges) return;
-    Array.from(ui.dependencyEdges.querySelectorAll(".dependency-edge-path, .dependency-edge-label")).forEach((el) =>
-      el.remove()
-    );
-
-    const nodesById = new Map((model.nodes || []).map((node) => [node.id, node]));
-
-    (model.edges || []).forEach((edge) => {
-      const fromNode = nodesById.get(edge.source);
-      const toNode = nodesById.get(edge.target);
-      if (!fromNode || !toNode) return;
-
-      // Arrows must always point downward, so the line is drawn from the
-      // upper node to the lower one and the arrowhead (marker-end) lands
-      // on the node that sits lower in the graph.
-      const pointsUp = toNode.y < fromNode.y;
-      const source = pointsUp ? toNode : fromNode;
-      const target = pointsUp ? fromNode : toNode;
-
-      const dx = target.x - source.x;
-      const dy = target.y - source.y;
-      if (dx === 0 && dy === 0) return;
-
-      const sourceHalfW = source.halfW || DEPENDENCY_DEFAULT_NODE_HALF_W;
-      const sourceHalfH = source.halfH || DEPENDENCY_DEFAULT_NODE_HALF_H;
-      const targetHalfW = target.halfW || DEPENDENCY_DEFAULT_NODE_HALF_W;
-      const targetHalfH = target.halfH || DEPENDENCY_DEFAULT_NODE_HALF_H;
-
-      // Start point: where the line leaves the source node's border.
-      const start = clipPointAtRectBoundary(source.x, source.y, sourceHalfW, sourceHalfH, dx, dy, DEPENDENCY_ARROW_GAP);
-      // End point: where the line reaches the target node's border, approached
-      // from the target's side so the arrowhead points squarely at it.
-      const end = clipPointAtRectBoundary(target.x, target.y, targetHalfW, targetHalfH, -dx, -dy, DEPENDENCY_ARROW_GAP);
-
-      const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
-      path.setAttribute("d", `M${start.x},${start.y} L${end.x},${end.y}`);
-      path.setAttribute("class", "dependency-edge-path");
-      ui.dependencyEdges.appendChild(path);
-
-      if (edge.label) {
-        // Offset the label perpendicular to the line (rather than a fixed
-        // vertical shift) so it clears the line/arrowhead at any angle and
-        // never sits on top of the connection itself.
-        const lineLength = Math.sqrt(dx * dx + dy * dy) || 1;
-        const normalX = -dy / lineLength;
-        const normalY = dx / lineLength;
-        const midX = (start.x + end.x) / 2;
-        const midY = (start.y + end.y) / 2;
-
-        const text = document.createElementNS("http://www.w3.org/2000/svg", "text");
-        text.setAttribute("x", String(midX + normalX * DEPENDENCY_LABEL_OFFSET));
-        text.setAttribute("y", String(midY + normalY * DEPENDENCY_LABEL_OFFSET));
-        text.setAttribute("text-anchor", "middle");
-        text.setAttribute("class", "dependency-edge-label");
-        text.textContent = edge.label;
-        ui.dependencyEdges.appendChild(text);
-      }
-    });
-  }
-
-  function measureDependencyNodeSizes() {
-    if (!ui.dependencyWorld) return;
-    Array.from(ui.dependencyWorld.querySelectorAll(".dependency-node")).forEach((el) => {
-      const nodeId = el.dataset.id;
-      const node = state.dependencyGraph.nodes.find((n) => n.id === nodeId);
-      if (!node) return;
-      const rect = el.getBoundingClientRect();
-      const scale = state.dependencyGraph.scale || 1;
-      if (rect.width && rect.height) {
-        node.halfW = rect.width / scale / 2;
-        node.halfH = rect.height / scale / 2;
-      }
-    });
-  }
-
-  function renderDependencyGraph(model) {
-    if (!ui.dependencyWorld) return;
-    Array.from(ui.dependencyWorld.querySelectorAll(".dependency-node")).forEach((el) => el.remove());
-
-    state.dependencyGraph.nodes = Array.isArray(model.nodes) ? model.nodes : [];
-    state.dependencyGraph.edges = Array.isArray(model.edges) ? model.edges : [];
-    state.dependencyGraph.rootId = model.rootId || null;
-
-    const hasNodes = state.dependencyGraph.nodes.length > 0;
-    if (ui.dependencyEmptyState) ui.dependencyEmptyState.hidden = hasNodes;
-
-    state.dependencyGraph.nodes.forEach((node) => {
-      const isRoot = node.id === model.rootId;
-      const el = document.createElement("div");
-      // The parent asset keeps its "is-root" highlight for the whole
-      // lifetime of the graph and is flagged as fixed so drag handling
-      // can refuse to move it.
-      el.className = "dependency-node" + (isRoot ? " is-root is-fixed" : "");
+    if (item.kind === "asset") {
+      const node = tree.byId.get(item.nodeId);
+      const isRoot = node.id === tree.rootId;
+      el.className = "dependency-node" + (isRoot ? " is-root" : "");
       el.dataset.id = node.id;
-      if (isRoot) el.dataset.fixed = "1";
-      el.style.left = `${node.x}px`;
-      el.style.top = `${node.y}px`;
-      el.innerHTML = `<div class="dependency-node-label" title="${escapeHtml(node.name)}">${escapeHtml(
-        node.name
-      )}</div>`;
-      el.addEventListener("mousedown", startDependencyNodeDrag);
-      el.addEventListener("click", (event) => {
-        event.stopPropagation();
-        Array.from(ui.dependencyWorld.querySelectorAll(".dependency-node")).forEach((n) =>
-          n.classList.remove("is-selected")
-        );
-        el.classList.add("is-selected");
-      });
-      ui.dependencyWorld.appendChild(el);
-    });
 
-    // Node border sizes are only known after layout, so measure real DOM
-    // dimensions before drawing edges to keep arrows flush with each pill.
-    measureDependencyNodeSizes();
-    renderDependencyEdges(model);
+      const card = document.createElement("div");
+      card.className = "dependency-node__card";
+      card.title = node.id;
+      const name = document.createElement("span");
+      name.className = "dependency-node__name";
+      name.textContent = node.title;
+      card.appendChild(name);
+      if (node.subtitle) {
+        const meta = document.createElement("span");
+        meta.className = "dependency-node__meta";
+        meta.textContent = node.subtitle;
+        card.appendChild(meta);
+      }
+      el.appendChild(card);
+
+      if (item.childCount) {
+        const label = `${item.expanded ? "Collapse" : "Expand"} ${pluralizeDependency(item.childCount, "related asset")}`;
+        const toggle = document.createElement("button");
+        toggle.type = "button";
+        toggle.className = "dependency-node__toggle" + (item.expanded ? " is-expanded" : "");
+        toggle.dataset.depAction = "toggle-node";
+        toggle.dataset.id = node.id;
+        toggle.setAttribute("aria-expanded", String(item.expanded));
+        toggle.setAttribute("aria-label", label);
+        toggle.title = label;
+        toggle.textContent = item.expanded ? "−" : formatDependencyCount(item.childCount);
+        el.appendChild(toggle);
+      }
+      return el;
+    }
+
+    if (item.kind === "group") {
+      const group = item.group;
+      const isUnlinked = group.key === DEP_UNLINKED_GROUP_KEY;
+      const isIncoming = !isUnlinked && group.dir === "in";
+      const label = getDependencyGroupLabel(group);
+      el.className =
+        "dependency-group" +
+        (isIncoming ? " is-incoming" : "") +
+        (isUnlinked ? " is-unlinked" : "") +
+        (item.collapsed ? " is-collapsed" : "");
+
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "dependency-group__btn";
+      button.dataset.depAction = "toggle-group";
+      button.dataset.groupId = item.groupId;
+      button.setAttribute("aria-expanded", String(!item.collapsed));
+      button.title =
+        `${label}${isIncoming ? " (points to this asset)" : ""} · ` +
+        `${pluralizeDependency(group.children.length, "asset")} — click to ${item.collapsed ? "show" : "hide"}`;
+      if (isIncoming) {
+        const dir = document.createElement("span");
+        dir.className = "dependency-group__dir";
+        dir.setAttribute("aria-hidden", "true");
+        dir.textContent = "↑";
+        button.appendChild(dir);
+      }
+      const text = document.createElement("span");
+      text.className = "dependency-group__label";
+      text.textContent = label;
+      const count = document.createElement("span");
+      count.className = "dependency-group__count";
+      count.textContent = formatDependencyCount(group.children.length);
+      button.appendChild(text);
+      button.appendChild(count);
+      el.appendChild(button);
+      return el;
+    }
+
+    el.className = "dependency-more";
+    const step = Math.min(getDependencyPageSize(), item.remaining);
+    const more = document.createElement("button");
+    more.type = "button";
+    more.className = "dependency-more__btn";
+    more.dataset.depAction = "more";
+    more.dataset.groupId = item.groupId;
+    more.textContent = `Show ${step} more`;
+    el.appendChild(more);
+    if (item.remaining > step) {
+      const all = document.createElement("button");
+      all.type = "button";
+      all.className = "dependency-more__btn dependency-more__btn--all";
+      all.dataset.depAction = "all";
+      all.dataset.groupId = item.groupId;
+      all.textContent = `Show all ${item.remaining}`;
+      el.appendChild(all);
+    }
+    return el;
   }
 
-  function updateDependencyZoomTransform() {
-    if (!ui.dependencyWorld) return;
-    const { scale, panX, panY } = state.dependencyGraph;
-    ui.dependencyWorld.style.transform = `translate(${panX}px, ${panY}px) scale(${scale})`;
-    if (ui.dependencyZoomLevel) {
-      ui.dependencyZoomLevel.textContent = `${Math.round(scale * 100)}%`;
+  function setDependencyEdgeMarker(path, active) {
+    const marker = path.dataset.marker;
+    if (!marker) return;
+    const id = (marker === "start" ? "dependencyArrowStart" : "dependencyArrow") + (active ? "Active" : "");
+    path.setAttribute(marker === "start" ? "marker-start" : "marker-end", `url(#${id})`);
+  }
+
+  function renderDependencyGraphView() {
+    const g = state.dependencyGraph;
+    const world = ui.dependencyWorld;
+    const svg = ui.dependencyEdges;
+    if (!world || !svg) return;
+
+    Array.from(world.children).forEach((child) => {
+      if (child !== svg) child.remove();
+    });
+    Array.from(svg.childNodes).forEach((child) => {
+      if (String(child.nodeName).toLowerCase() !== "defs") child.remove();
+    });
+    g.elements = new Map();
+    g.edgeElements = new Map();
+
+    const layout = g.layout;
+    const width = layout ? layout.width : 0;
+    const height = layout ? layout.height : 0;
+    world.style.width = `${width}px`;
+    world.style.height = `${height}px`;
+    svg.setAttribute("width", String(width));
+    svg.setAttribute("height", String(height));
+    svg.setAttribute("viewBox", `0 0 ${Math.max(1, width)} ${Math.max(1, height)}`);
+    if (!layout) return;
+
+    const edgeFrag = document.createDocumentFragment();
+    layout.items.forEach((item) => {
+      const parentKey = layout.parentOf.get(item.key);
+      if (!parentKey) return;
+      const parent = layout.byKey.get(parentKey);
+      const path = document.createElementNS(DEP_SVG_NS, "path");
+      path.setAttribute("d", buildDependencyPolyline(getDependencyEdgePoints(parent, item)));
+      let cls = "dependency-edge";
+      if (item.kind === "more") {
+        cls += " is-more";
+      } else if (parent.kind === "group") {
+        const group = parent.group;
+        if (group.key === DEP_UNLINKED_GROUP_KEY) {
+          cls += " is-unlinked";
+        } else if (group.dir === "in") {
+          cls += " is-incoming";
+          path.dataset.marker = "start";
+        } else {
+          path.dataset.marker = "end";
+        }
+      }
+      path.setAttribute("class", cls);
+      setDependencyEdgeMarker(path, false);
+      edgeFrag.appendChild(path);
+      g.edgeElements.set(item.key, path);
+    });
+    svg.appendChild(edgeFrag);
+
+    const nodeFrag = document.createDocumentFragment();
+    layout.items.forEach((item) => {
+      const el = createDependencyItemElement(item);
+      g.elements.set(item.key, el);
+      nodeFrag.appendChild(el);
+    });
+    world.appendChild(nodeFrag);
+  }
+
+  /* Highlights the selected asset and its path back to the root. */
+  function applyDependencySelectionClasses() {
+    const g = state.dependencyGraph;
+    g.elements.forEach((el) => el.classList.remove("is-selected", "is-on-path"));
+    g.edgeElements.forEach((path) => {
+      if (!path.classList.contains("is-on-path")) return;
+      path.classList.remove("is-on-path");
+      setDependencyEdgeMarker(path, false);
+    });
+    const layout = g.layout;
+    if (!layout || !g.selectedId) return;
+    let key = "a:" + g.selectedId;
+    if (!layout.byKey.has(key)) return;
+    const selectedEl = g.elements.get(key);
+    if (selectedEl) selectedEl.classList.add("is-selected");
+    while (key) {
+      const el = g.elements.get(key);
+      if (el) el.classList.add("is-on-path");
+      const edge = g.edgeElements.get(key);
+      if (edge) {
+        edge.classList.add("is-on-path");
+        setDependencyEdgeMarker(edge, true);
+        // Draw the highlighted path above the shared grey connectors.
+        ui.dependencyEdges.appendChild(edge);
+      }
+      key = layout.parentOf.get(key);
     }
   }
 
-  function dependencyZoomIn() {
-    state.dependencyGraph.scale = Math.min(2, state.dependencyGraph.scale + 0.1);
+  /**
+   * Rebuilds the visible tree and redraws it. options.anchorKey keeps that
+   * item at the same spot on screen (so the node you just expanded does not
+   * jump away); options.refocus puts keyboard focus back on the control
+   * that triggered the render.
+   */
+  function renderDependencyView(options) {
+    const opts = options || {};
+    const g = state.dependencyGraph;
+
+    let anchorBefore = null;
+    if (opts.anchorKey && g.layout) {
+      const before = g.layout.byKey.get(opts.anchorKey);
+      if (before) anchorBefore = { x: before.x * g.scale + g.panX, y: before.y * g.scale + g.panY };
+    }
+
+    g.layout = g.tree ? layoutDependencyTree(buildDependencyVisibleTree(), g.columns || DEP_DEFAULT_COLUMNS) : null;
+
+    if (anchorBefore) {
+      const after = g.layout.byKey.get(opts.anchorKey);
+      if (after) {
+        g.panX = anchorBefore.x - after.x * g.scale;
+        g.panY = anchorBefore.y - after.y * g.scale;
+      }
+    }
+
+    renderDependencyGraphView();
+    applyDependencySelectionClasses();
+    updateDependencyZoomTransform();
+
+    if (opts.refocus) {
+      const holder = g.elements.get(opts.refocus.key);
+      const target = holder && holder.querySelector(`[data-dep-action="${opts.refocus.action}"]`);
+      if (target) target.focus({ preventScroll: true });
+    }
+  }
+
+  /* ---------------- Asset Relationship: node details popup ---------------- */
+  /* Clicking an asset in the relationship graph opens a small popup with the
+     clicked asset's details. It never changes the tree, layout or view. */
+  const dependencyPopup = {
+    el: null,
+    nodeId: null,
+    eventsBound: false
+  };
+  const DEPENDENCY_POPUP_GAP = 10;
+  const DEPENDENCY_POPUP_EDGE_MARGIN = 8;
+  const DEPENDENCY_CLICK_DRAG_TOLERANCE = 4;
+  /* AssignedTo / AssetManager / Location per ChildAsset, built once per
+     load instead of rescanning every row for every click. */
+  let dependencyDetailsIndex = null;
+
+  /* Lookup values arrive as "<GUID>;#<Display Value>" — show only the part
+     after the "#". Multi-value lookups ("id;#name;#id;#name") are joined. */
+  function formatDependencyLookupValue(raw) {
+    if (raw == null) return "";
+    const text = String(raw).trim();
+    if (!text) return "";
+    if (text.indexOf(";#") !== -1) {
+      const parts = text.split(";#");
+      const names = [];
+      for (let i = 1; i < parts.length; i += 2) {
+        const name = String(parts[i] || "").trim();
+        if (name) names.push(name);
+      }
+      return names.join(", ");
+    }
+    const hashIndex = text.indexOf("#");
+    if (hashIndex !== -1) return text.slice(hashIndex + 1).trim();
+    return text;
+  }
+
+  const DEPENDENCY_DETAIL_FIELDS = {
+    assignedTo: ["AssignedTo", "Assigned To"],
+    assetManager: ["AssetManager", "Asset Manager"],
+    location: ["Location"]
+  };
+
+  function buildDependencyDetailsIndex() {
+    const index = new Map();
+    // Every node (including the Depth 0 root): the row where it is the
+    // ChildAsset carries its own Location / AssetManager / AssignedTo.
+    const rows = Array.isArray(state.dependencyRowsRaw) ? state.dependencyRowsRaw : [];
+    rows.forEach((row) => {
+      const childName = String(
+        getValue(row, ["ChildAsset", "Child Asset"]) || (row && row.ChildAsset) || ""
+      ).trim();
+      if (!childName) return;
+      if (!index.has(childName)) index.set(childName, { assignedTo: "", assetManager: "", location: "" });
+      const result = index.get(childName);
+      Object.keys(DEPENDENCY_DETAIL_FIELDS).forEach((key) => {
+        if (result[key]) return;
+        result[key] = formatDependencyLookupValue(getRawFieldValueLoose(row, DEPENDENCY_DETAIL_FIELDS[key]));
+      });
+    });
+    return index;
+  }
+
+  function getDependencyNodeDetails(nodeId) {
+    const id = String(nodeId == null ? "" : nodeId).trim();
+    if (!dependencyDetailsIndex) dependencyDetailsIndex = buildDependencyDetailsIndex();
+    const result = Object.assign(
+      { assignedTo: "", assetManager: "", location: "" },
+      dependencyDetailsIndex.get(id) || {}
+    );
+
+    // Legacy fallback: response without a Depth 0 row — use the Summary record.
+    const tree = state.dependencyGraph.tree;
+    if (id && tree && id === tree.rootId) {
+      const summary = (state.pageDetails && state.pageDetails.asset) || null;
+      if (summary) {
+        Object.keys(DEPENDENCY_DETAIL_FIELDS).forEach((key) => {
+          if (result[key]) return;
+          result[key] = formatDependencyLookupValue(getRawFieldValueLoose(summary, DEPENDENCY_DETAIL_FIELDS[key]));
+        });
+      }
+    }
+
+    return result;
+  }
+
+  function ensureDependencyPopup() {
+    if (dependencyPopup.el) return dependencyPopup.el;
+    const el = document.createElement("div");
+    el.id = "dependencyNodePopup";
+    el.className = "dependency-node-popup";
+    el.setAttribute("role", "dialog");
+    el.setAttribute("aria-label", "Asset details");
+    el.hidden = true;
+    document.body.appendChild(el);
+    dependencyPopup.el = el;
+    return el;
+  }
+
+  function fillDependencyPopup(nodeId) {
+    const popup = ensureDependencyPopup();
+    const tree = state.dependencyGraph.tree;
+    const node = tree ? tree.byId.get(nodeId) : null;
+    const details = getDependencyNodeDetails(nodeId);
+    const rowsDef = [
+      ["Assigned To", details.assignedTo],
+      ["Asset Manager", details.assetManager],
+      ["Location", details.location]
+    ];
+    popup.textContent = "";
+
+    const title = document.createElement("div");
+    title.className = "dependency-node-popup__title";
+    title.textContent = node ? node.title : String(nodeId || "");
+    popup.appendChild(title);
+
+    rowsDef.forEach((def) => {
+      const row = document.createElement("div");
+      row.className = "dependency-node-popup__row";
+      const label = document.createElement("span");
+      label.className = "dependency-node-popup__label";
+      label.textContent = def[0];
+      const value = document.createElement("span");
+      value.className = "dependency-node-popup__value";
+      value.textContent = def[1] || "-";
+      row.appendChild(label);
+      row.appendChild(value);
+      popup.appendChild(row);
+    });
+  }
+
+  function getDependencyNodeElement(nodeId) {
+    return state.dependencyGraph.elements.get("a:" + nodeId) || null;
+  }
+
+  function positionDependencyPopup() {
+    const popup = dependencyPopup.el;
+    if (!popup || popup.hidden || dependencyPopup.nodeId == null) return;
+    const nodeEl = getDependencyNodeElement(dependencyPopup.nodeId);
+    if (!nodeEl || !nodeEl.isConnected) {
+      closeDependencyPopup();
+      return;
+    }
+    const anchor = nodeEl.querySelector(".dependency-node__card") || nodeEl;
+    const rect = anchor.getBoundingClientRect();
+    const popupW = popup.offsetWidth;
+    const popupH = popup.offsetHeight;
+    const vw = document.documentElement.clientWidth || window.innerWidth;
+    const vh = document.documentElement.clientHeight || window.innerHeight;
+    const margin = DEPENDENCY_POPUP_EDGE_MARGIN;
+
+    let left = rect.left + rect.width / 2 - popupW / 2;
+    left = Math.max(margin, Math.min(left, vw - popupW - margin));
+
+    // Prefer below the node; flip above when there is no room.
+    let top = rect.bottom + DEPENDENCY_POPUP_GAP;
+    if (top + popupH + margin > vh && rect.top - DEPENDENCY_POPUP_GAP - popupH >= margin) {
+      top = rect.top - DEPENDENCY_POPUP_GAP - popupH;
+    }
+    top = Math.max(margin, Math.min(top, vh - popupH - margin));
+
+    popup.style.left = `${Math.round(left)}px`;
+    popup.style.top = `${Math.round(top)}px`;
+  }
+
+  function openDependencyPopup(nodeId) {
+    if (nodeId == null) return;
+    const popup = ensureDependencyPopup();
+    dependencyPopup.nodeId = nodeId;
+    // Re-filled on every call, so clicking another asset updates it at once.
+    fillDependencyPopup(nodeId);
+    popup.hidden = false;
+    positionDependencyPopup();
+  }
+
+  function closeDependencyPopup() {
+    dependencyPopup.nodeId = null;
+    if (dependencyPopup.el) dependencyPopup.el.hidden = true;
+  }
+
+  function isDependencyPopupOpen() {
+    return Boolean(dependencyPopup.el && !dependencyPopup.el.hidden);
+  }
+
+  function bindDependencyPopupEvents() {
+    if (dependencyPopup.eventsBound) return;
+    dependencyPopup.eventsBound = true;
+
+    // Close on any scroll (page or any scrollable container — capture phase
+    // catches scroll events that do not bubble) and on mouse-wheel use.
+    window.addEventListener(
+      "scroll",
+      (event) => {
+        if (!isDependencyPopupOpen()) return;
+        if (dependencyPopup.el && event.target instanceof Node && dependencyPopup.el.contains(event.target)) return;
+        closeDependencyPopup();
+      },
+      true
+    );
+    window.addEventListener(
+      "wheel",
+      () => {
+        if (isDependencyPopupOpen()) closeDependencyPopup();
+      },
+      { capture: true, passive: true }
+    );
+    window.addEventListener(
+      "touchmove",
+      () => {
+        if (isDependencyPopupOpen()) closeDependencyPopup();
+      },
+      { capture: true, passive: true }
+    );
+    window.addEventListener("resize", () => {
+      if (isDependencyPopupOpen()) closeDependencyPopup();
+    });
+
+    // Clicking empty space (or starting to pan the graph) dismisses it;
+    // clicks on nodes / inside the popup are handled separately.
+    document.addEventListener("mousedown", (event) => {
+      if (!isDependencyPopupOpen()) return;
+      const target = event.target;
+      if (!(target instanceof Element)) return;
+      if (target.closest(".dependency-node-popup") || target.closest(".dependency-node__card")) return;
+      closeDependencyPopup();
+    });
+    document.addEventListener("keydown", (event) => {
+      if (event.key === "Escape" && isDependencyPopupOpen()) closeDependencyPopup();
+    });
+  }
+
+  /* ---------------- Pan / zoom ---------------- */
+
+  function getDependencyViewportSize() {
+    const vp = ui.dependencyViewport;
+    return { width: vp ? vp.clientWidth : 0, height: vp ? vp.clientHeight : 0 };
+  }
+
+  function clampDependencyScale(scale) {
+    return Math.max(DEP_MIN_SCALE, Math.min(DEP_MAX_SCALE, scale));
+  }
+
+  /* Boxes per row that fit the viewport at the normal reading zoom. */
+  function getDependencyColumnsForViewport() {
+    const width = getDependencyViewportSize().width;
+    if (!width) return state.dependencyGraph.columns || DEP_DEFAULT_COLUMNS;
+    const L = DEP_LAYOUT;
+    const usable = width / DEP_FOCUS_SCALE - L.padding * 2 - L.trunkPad + L.siblingGapX;
+    const columns = Math.floor(usable / (L.nodeW + L.siblingGapX));
+    return Math.max(DEP_MIN_COLUMNS, Math.min(DEP_MAX_COLUMNS, columns));
+  }
+
+  function updateDependencyZoomTransform() {
+    const g = state.dependencyGraph;
+    if (ui.dependencyWorld) {
+      ui.dependencyWorld.style.transform = `translate(${g.panX}px, ${g.panY}px) scale(${g.scale})`;
+    }
+    if (ui.dependencyZoomLevel) {
+      ui.dependencyZoomLevel.textContent = `${Math.round(g.scale * 100)}%`;
+    }
+    positionDependencyPopup();
+  }
+
+  /* Zooms keeping the point (anchorX, anchorY) — viewport pixels — still. */
+  function setDependencyScale(nextScale, anchorX, anchorY) {
+    const g = state.dependencyGraph;
+    const size = getDependencyViewportSize();
+    const ax = anchorX == null ? size.width / 2 : anchorX;
+    const ay = anchorY == null ? size.height / 2 : anchorY;
+    const scale = clampDependencyScale(nextScale);
+    g.panX = ax - (ax - g.panX) * (scale / g.scale);
+    g.panY = ay - (ay - g.panY) * (scale / g.scale);
+    g.scale = scale;
+    g.userMoved = true;
     updateDependencyZoomTransform();
   }
 
+  function dependencyZoomIn() {
+    setDependencyScale(state.dependencyGraph.scale * 1.2);
+  }
+
   function dependencyZoomOut() {
-    state.dependencyGraph.scale = Math.max(0.4, state.dependencyGraph.scale - 0.1);
-    updateDependencyZoomTransform();
+    setDependencyScale(state.dependencyGraph.scale / 1.2);
   }
 
   function dependencyResetZoom() {
@@ -3727,201 +5358,296 @@
   }
 
   /**
-   * Calculates the bounding box of every node (using their real measured
-   * half-width/height) and sets pan/scale so the whole graph is centered
-   * and fully visible inside the viewport, without the user needing to
-   * zoom out or pan manually. Used on initial load, on view switches, and
-   * by the "Fit graph" toolbar button.
+   * Scales and centres the whole visible tree inside the viewport (never
+   * above 100%). Used by the "Fit graph" button.
    */
   function fitDependencyGraphToView() {
-    if (!ui.dependencyViewport) return;
-    const nodes = state.dependencyGraph.nodes || [];
+    const g = state.dependencyGraph;
+    const size = getDependencyViewportSize();
+    if (!g.layout) {
+      dependencyResetZoom();
+      return;
+    }
+    if (!size.width || !size.height) {
+      g.pendingInitialView = true;
+      return;
+    }
+    const scale = clampDependencyScale(Math.min(1, size.width / g.layout.width, size.height / g.layout.height));
+    g.scale = scale;
+    g.panX = (size.width - g.layout.width * scale) / 2;
+    g.panY = (size.height - g.layout.height * scale) / 2;
+    updateDependencyZoomTransform();
+  }
 
-    if (!nodes.length) {
+  /**
+   * First view of a tree: fit it when it is still readable that way;
+   * otherwise zoom to a readable size with the root centred at the top,
+   * so the first rows of children are legible right away.
+   */
+  function applyDependencyInitialView() {
+    const g = state.dependencyGraph;
+    const size = getDependencyViewportSize();
+    if (!g.layout || !size.width || !size.height) {
+      g.pendingInitialView = Boolean(g.layout);
+      return;
+    }
+    g.pendingInitialView = false;
+    g.userMoved = false;
+    const fit = Math.min(size.width / g.layout.width, size.height / g.layout.height);
+    if (fit >= DEP_READABLE_SCALE) {
+      fitDependencyGraphToView();
+      return;
+    }
+    const root = g.layout.byKey.get("a:" + g.tree.rootId);
+    const scale = DEP_FOCUS_SCALE;
+    g.scale = scale;
+    g.panX = size.width / 2 - (root.x + root.w / 2) * scale;
+    g.panY = 20 - root.y * scale;
+    updateDependencyZoomTransform();
+  }
+
+  /* ---------------- Events ---------------- */
+
+  function selectDependencyNode(id) {
+    state.dependencyGraph.selectedId = id;
+    applyDependencySelectionClasses();
+  }
+
+  /* One handler for every [data-dep-action] button in the graph. */
+  function handleDependencyAction(button) {
+    const g = state.dependencyGraph;
+    if (!g.tree) return;
+    const action = button.dataset.depAction;
+
+    if (action === "toggle-node") {
+      const id = button.dataset.id;
+      if (g.expanded.has(id)) g.expanded.delete(id);
+      else g.expanded.add(id);
+      renderDependencyView({ anchorKey: "a:" + id, refocus: { key: "a:" + id, action } });
+      return;
+    }
+
+    if (action === "toggle-group") {
+      const groupId = button.dataset.groupId;
+      if (g.collapsedGroups.has(groupId)) g.collapsedGroups.delete(groupId);
+      else g.collapsedGroups.add(groupId);
+      renderDependencyView({ anchorKey: "g:" + groupId, refocus: { key: "g:" + groupId, action } });
+      return;
+    }
+
+    if (action === "more" || action === "all") {
+      const groupId = button.dataset.groupId;
+      const pages = g.pageCounts.get(groupId) || 1;
+      g.pageCounts.set(groupId, action === "all" ? Infinity : pages + 1);
+      // The group pill stays put; new rows appear below the existing ones.
+      renderDependencyView({ anchorKey: "g:" + groupId, refocus: { key: "m:" + groupId, action: "more" } });
+    }
+  }
+
+  const dependencyPointer = {
+    pointers: new Map(),
+    panning: false,
+    startX: 0,
+    startY: 0,
+    startPanX: 0,
+    startPanY: 0,
+    moved: false,
+    pinch: null
+  };
+
+  function onDependencyPointerDown(event) {
+    if (event.pointerType === "mouse" && event.button !== 0) return;
+    const target = event.target;
+    if (target instanceof Element && target.closest("button")) return;
+    const g = state.dependencyGraph;
+    dependencyPointer.pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+    dependencyPointer.moved = false;
+    if (dependencyPointer.pointers.size === 1) {
+      dependencyPointer.panning = true;
+      dependencyPointer.startX = event.clientX;
+      dependencyPointer.startY = event.clientY;
+      dependencyPointer.startPanX = g.panX;
+      dependencyPointer.startPanY = g.panY;
+    } else if (dependencyPointer.pointers.size === 2) {
+      // Two fingers: pinch-zoom around their midpoint.
+      const [a, b] = Array.from(dependencyPointer.pointers.values());
+      dependencyPointer.panning = false;
+      dependencyPointer.pinch = { distance: Math.hypot(a.x - b.x, a.y - b.y) || 1, scale: g.scale };
+    }
+  }
+
+  function onDependencyPointerMove(event) {
+    if (!dependencyPointer.pointers.has(event.pointerId)) return;
+    dependencyPointer.pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+    const g = state.dependencyGraph;
+
+    if (dependencyPointer.pinch && dependencyPointer.pointers.size >= 2) {
+      const [a, b] = Array.from(dependencyPointer.pointers.values());
+      const rect = ui.dependencyViewport.getBoundingClientRect();
+      const distance = Math.hypot(a.x - b.x, a.y - b.y) || 1;
+      dependencyPointer.moved = true;
+      setDependencyScale(
+        dependencyPointer.pinch.scale * (distance / dependencyPointer.pinch.distance),
+        (a.x + b.x) / 2 - rect.left,
+        (a.y + b.y) / 2 - rect.top
+      );
+      return;
+    }
+    if (!dependencyPointer.panning) return;
+    const dx = event.clientX - dependencyPointer.startX;
+    const dy = event.clientY - dependencyPointer.startY;
+    if (!dependencyPointer.moved && Math.abs(dx) + Math.abs(dy) <= DEPENDENCY_CLICK_DRAG_TOLERANCE) return;
+    if (!dependencyPointer.moved) {
+      dependencyPointer.moved = true;
+      if (ui.dependencyViewport) ui.dependencyViewport.classList.add("is-dragging");
+    }
+    g.panX = dependencyPointer.startPanX + dx;
+    g.panY = dependencyPointer.startPanY + dy;
+    g.userMoved = true;
+    updateDependencyZoomTransform();
+  }
+
+  function onDependencyPointerUp(event) {
+    if (!dependencyPointer.pointers.has(event.pointerId)) return;
+    dependencyPointer.pointers.delete(event.pointerId);
+    if (dependencyPointer.pointers.size < 2) dependencyPointer.pinch = null;
+    if (dependencyPointer.pointers.size === 1) {
+      // One finger left after a pinch: continue as a pan from here.
+      const remaining = Array.from(dependencyPointer.pointers.values())[0];
+      dependencyPointer.panning = true;
+      dependencyPointer.startX = remaining.x;
+      dependencyPointer.startY = remaining.y;
+      dependencyPointer.startPanX = state.dependencyGraph.panX;
+      dependencyPointer.startPanY = state.dependencyGraph.panY;
+    }
+    if (!dependencyPointer.pointers.size) {
+      dependencyPointer.panning = false;
+      if (ui.dependencyViewport) ui.dependencyViewport.classList.remove("is-dragging");
+    }
+  }
+
+  function onDependencyWheel(event) {
+    event.preventDefault();
+    const rect = ui.dependencyViewport.getBoundingClientRect();
+    const unit = event.deltaMode === 1 ? 33 : event.deltaMode === 2 ? 400 : 1;
+    const delta = Math.max(-300, Math.min(300, event.deltaY * unit));
+    setDependencyScale(
+      state.dependencyGraph.scale * Math.exp(-delta * 0.0015),
+      event.clientX - rect.left,
+      event.clientY - rect.top
+    );
+  }
+
+  function onDependencyGraphClick(event) {
+    const target = event.target;
+    if (!(target instanceof Element)) return;
+    const actionButton = target.closest("[data-dep-action]");
+    if (actionButton) {
+      event.stopPropagation();
+      handleDependencyAction(actionButton);
+      return;
+    }
+    if (dependencyPointer.moved) return;
+    const card = target.closest(".dependency-node__card");
+    if (card) {
+      event.stopPropagation();
+      const id = card.parentElement.dataset.id;
+      selectDependencyNode(id);
+      openDependencyPopup(id);
+      return;
+    }
+    // Plain click on empty canvas clears the highlighted path.
+    if (state.dependencyGraph.selectedId != null) selectDependencyNode(null);
+  }
+
+  /* The viewport has no size while its tab is hidden: the first view is
+     applied once it gets one. A width change re-wraps the rows, and the
+     view is re-fitted until the user has panned or zoomed themselves. */
+  function onDependencyViewportResize() {
+    const g = state.dependencyGraph;
+    const size = getDependencyViewportSize();
+    if (!size.width || !size.height) return;
+    const columns = getDependencyColumnsForViewport();
+    const columnsChanged = columns !== g.columns;
+    g.columns = columns;
+    if (!g.tree) return;
+    if (columnsChanged) renderDependencyView({ anchorKey: "a:" + g.tree.rootId });
+    if (g.pendingInitialView || !g.userMoved) applyDependencyInitialView();
+  }
+
+  let dependencyGraphEventsBound = false;
+
+  function bindDependencyGraphEvents() {
+    if (dependencyGraphEventsBound) return;
+    dependencyGraphEventsBound = true;
+    bindDependencyPopupEvents();
+
+    if (ui.depZoomIn) ui.depZoomIn.addEventListener("click", dependencyZoomIn);
+    if (ui.depZoomOut) ui.depZoomOut.addEventListener("click", dependencyZoomOut);
+    if (ui.depFitView) {
+      ui.depFitView.addEventListener("click", () => {
+        fitDependencyGraphToView();
+        state.dependencyGraph.userMoved = true;
+      });
+    }
+
+    if (ui.dependencyViewport) {
+      ui.dependencyViewport.addEventListener("pointerdown", onDependencyPointerDown);
+      ui.dependencyViewport.addEventListener("wheel", onDependencyWheel, { passive: false });
+      ui.dependencyViewport.addEventListener("click", onDependencyGraphClick);
+      ui.dependencyViewport.addEventListener("dblclick", (event) => {
+        const card = event.target instanceof Element && event.target.closest(".dependency-node__card");
+        const toggle = card && card.parentElement.querySelector('[data-dep-action="toggle-node"]');
+        if (toggle) handleDependencyAction(toggle);
+      });
+    }
+    document.addEventListener("pointermove", onDependencyPointerMove);
+    document.addEventListener("pointerup", onDependencyPointerUp);
+    document.addEventListener("pointercancel", onDependencyPointerUp);
+
+    if (typeof ResizeObserver === "function" && ui.dependencyViewport) {
+      new ResizeObserver(onDependencyViewportResize).observe(ui.dependencyViewport);
+    } else {
+      window.addEventListener("resize", onDependencyViewportResize);
+    }
+  }
+
+  /* ---------------- Entry points ---------------- */
+
+  function renderDependencyGraph(model) {
+    closeDependencyPopup();
+    const g = state.dependencyGraph;
+    const previousRootId = g.tree ? g.tree.rootId : null;
+    dependencyDetailsIndex = null;
+    const tree = buildDependencyTree(model, state.dependencyRowsRaw);
+    g.model = model || null;
+    g.tree = tree;
+    g.columns = getDependencyColumnsForViewport();
+    if (ui.dependencyEmptyState) ui.dependencyEmptyState.hidden = Boolean(tree);
+
+    if (!tree) {
+      g.selectedId = null;
+      renderDependencyView();
       dependencyResetZoom();
       return;
     }
 
-    const padding = 90;
-    let minX = Infinity;
-    let maxX = -Infinity;
-    let minY = Infinity;
-    let maxY = -Infinity;
-
-    nodes.forEach((node) => {
-      const halfW = (node.halfW || DEPENDENCY_DEFAULT_NODE_HALF_W) + padding;
-      const halfH = (node.halfH || DEPENDENCY_DEFAULT_NODE_HALF_H) + padding;
-      minX = Math.min(minX, node.x - halfW);
-      maxX = Math.max(maxX, node.x + halfW);
-      minY = Math.min(minY, node.y - halfH);
-      maxY = Math.max(maxY, node.y + halfH);
-    });
-
-    const graphWidth = Math.max(1, maxX - minX);
-    const graphHeight = Math.max(1, maxY - minY);
-
-    const viewportWidth = ui.dependencyViewport.clientWidth || graphWidth;
-    const viewportHeight = ui.dependencyViewport.clientHeight || graphHeight;
-
-    const scaleX = viewportWidth / graphWidth;
-    const scaleY = viewportHeight / graphHeight;
-    const scale = Math.max(0.4, Math.min(1.2, Math.min(scaleX, scaleY)));
-
-    const centerX = (minX + maxX) / 2;
-    const centerY = (minY + maxY) / 2;
-
-    state.dependencyGraph.scale = scale;
-    state.dependencyGraph.panX = viewportWidth / 2 - centerX * scale;
-    state.dependencyGraph.panY = viewportHeight / 2 - centerY * scale;
-
-    updateDependencyZoomTransform();
-  }
-
-  let dependencyDraggingNode = null;
-  let dependencyDragOffsetX = 0;
-  let dependencyDragOffsetY = 0;
-  let dependencyIsPanning = false;
-  let dependencyPanStartX = 0;
-  let dependencyPanStartY = 0;
-
-  function startDependencyNodeDrag(event) {
-    // The parent asset is fixed at the top of the graph and cannot be
-    // dragged beside or below its children.
-    if (event.currentTarget && event.currentTarget.dataset.fixed === "1") {
-      dependencyDraggingNode = null;
-      return;
-    }
-    dependencyDraggingNode = event.currentTarget;
-
-    const nodeId = dependencyDraggingNode.dataset.id;
-    const node = state.dependencyGraph.nodes.find((n) => n.id === nodeId);
-    if (!node || !ui.dependencyViewport) return;
-
-    const viewportRect = ui.dependencyViewport.getBoundingClientRect();
-    const { scale, panX, panY } = state.dependencyGraph;
-    const mouseWorldX = (event.clientX - viewportRect.left - panX) / scale;
-    const mouseWorldY = (event.clientY - viewportRect.top - panY) / scale;
-
-    // node.x/node.y always represent the node's CENTER (that's what the
-    // CSS `translate(-50%, -50%)` and the edge-drawing code both assume),
-    // so track the offset from the mouse to that center — not to the
-    // element's top-left corner — to avoid the two drifting apart.
-    dependencyDragOffsetX = mouseWorldX - node.x;
-    dependencyDragOffsetY = mouseWorldY - node.y;
-
-    document.addEventListener("mousemove", dependencyDragNode);
-    document.addEventListener("mouseup", stopDependencyNodeDrag);
-  }
-
-  function dependencyDragNode(event) {
-    if (!dependencyDraggingNode || !ui.dependencyViewport) return;
-
-    const nodeId = dependencyDraggingNode.dataset.id;
-    const node = state.dependencyGraph.nodes.find((n) => n.id === nodeId);
-    if (!node) return;
-
-    const viewportRect = ui.dependencyViewport.getBoundingClientRect();
-    const { scale, panX, panY } = state.dependencyGraph;
-    const mouseWorldX = (event.clientX - viewportRect.left - panX) / scale;
-    const mouseWorldY = (event.clientY - viewportRect.top - panY) / scale;
-
-    node.x = mouseWorldX - dependencyDragOffsetX;
-    node.y = mouseWorldY - dependencyDragOffsetY;
-
-    // A child can never be dragged level with or above the parent asset,
-    // which stays pinned at the top of the graph.
-    const rootNode = state.dependencyGraph.nodes.find((n) => n.id === state.dependencyGraph.rootId);
-    if (rootNode && node.id !== rootNode.id) {
-      const minY = rootNode.y + DEPENDENCY_MIN_CHILD_GAP_Y;
-      if (node.y < minY) node.y = minY;
+    // A refresh of the same asset (e.g. after Add Relationship) keeps what
+    // the user opened and where they were looking.
+    const keepState = previousRootId === tree.rootId;
+    if (keepState) {
+      g.expanded = new Set(Array.from(g.expanded).filter((id) => tree.byId.has(id)));
+      g.expanded.add(tree.rootId);
+      if (g.selectedId != null && !tree.byId.has(g.selectedId)) g.selectedId = null;
+    } else {
+      g.collapsedGroups = new Set();
+      g.pageCounts = new Map();
+      g.selectedId = null;
+      g.expanded = expandDependencyLevels(DEP_INITIAL_VISIBLE_BUDGET);
     }
 
-    dependencyDraggingNode.style.left = `${node.x}px`;
-    dependencyDraggingNode.style.top = `${node.y}px`;
-
-    renderDependencyEdges({
-      nodes: state.dependencyGraph.nodes,
-      edges: state.dependencyGraph.edges
-    });
-  }
-
-  function stopDependencyNodeDrag() {
-    dependencyDraggingNode = null;
-    document.removeEventListener("mousemove", dependencyDragNode);
-    document.removeEventListener("mouseup", stopDependencyNodeDrag);
-  }
-
-  function applyDependencyViewChange(view) {
-    const model = state.dependencyGraph.model;
-    if (!model) return;
-    state.dependencyGraph.currentView = view;
-    (ui.dependencyViewButtons || []).forEach((btn) => {
-      btn.classList.toggle("active", btn.dataset.view === view);
-    });
-    applyDependencyLayout(model, view);
-    renderDependencyGraph(model);
-    fitDependencyGraphToView();
-  }
-
-  let dependencyGridEventsBound = false;
-
-  function bindDependencyGraphEvents() {
-    if (dependencyGridEventsBound) return;
-    dependencyGridEventsBound = true;
-
-    if (ui.depZoomIn) ui.depZoomIn.addEventListener("click", dependencyZoomIn);
-    if (ui.depZoomOut) ui.depZoomOut.addEventListener("click", dependencyZoomOut);
-    if (ui.depFitView) ui.depFitView.addEventListener("click", fitDependencyGraphToView);
-
-    (ui.dependencyViewButtons || []).forEach((btn) => {
-      btn.addEventListener("click", () => {
-        const view = String(btn.dataset.view || "dependency").trim();
-        applyDependencyViewChange(view);
-      });
-    });
-
-    if (ui.dependencyViewport) {
-      ui.dependencyViewport.addEventListener("mousedown", (event) => {
-        if (event.target.closest(".dependency-node")) return;
-        dependencyIsPanning = true;
-        dependencyPanStartX = event.clientX - state.dependencyGraph.panX;
-        dependencyPanStartY = event.clientY - state.dependencyGraph.panY;
-        ui.dependencyViewport.classList.add("is-dragging");
-      });
-
-      ui.dependencyViewport.addEventListener(
-        "wheel",
-        (event) => {
-          event.preventDefault();
-          if (event.deltaY < 0) {
-            dependencyZoomIn();
-          } else {
-            dependencyZoomOut();
-          }
-        },
-        { passive: false }
-      );
-    }
-
-    document.addEventListener("mousemove", (event) => {
-      if (!dependencyIsPanning) return;
-      state.dependencyGraph.panX = event.clientX - dependencyPanStartX;
-      state.dependencyGraph.panY = event.clientY - dependencyPanStartY;
-      updateDependencyZoomTransform();
-    });
-
-    document.addEventListener("mouseup", () => {
-      dependencyIsPanning = false;
-      if (ui.dependencyViewport) ui.dependencyViewport.classList.remove("is-dragging");
-    });
-
-    // Keep the graph centered if the viewport size changes (e.g. the
-    // window is resized) while the Asset Dependency tab is visible.
-    window.addEventListener("resize", () => {
-      if (!ui.dependencyCard || ui.dependencyCard.hidden) return;
-      if (!(state.dependencyGraph.nodes || []).length) return;
-      fitDependencyGraphToView();
-    });
+    renderDependencyView();
+    if (!keepState) applyDependencyInitialView();
   }
 
   async function loadDependencyRows(details) {
@@ -3936,7 +5662,6 @@
     if (!recordId) {
       console.warn("[Asset Dependency] No recordId found on page details or in URL query string.");
       state.dependencyRowsRaw = [];
-      state.dependencyGraph.model = null;
       if (ui.dependencyLoadingState) ui.dependencyLoadingState.hidden = true;
       renderDependencyGraph({ nodes: [], edges: [], rootId: null });
       return;
@@ -3949,24 +5674,33 @@
 
     // details.assetName is the name of the asset matching SelectedRecordIDParam
     // (recordId) — i.e. the asset currently open on this page. This is what
-    // pins the root of the dependency graph, regardless of how the fetched
+    // pins the root of the relationship tree, regardless of how the fetched
     // relationship rows connect it to other assets.
     const rootName = (details && details.assetName) || "";
     const model = buildDependencyGraphModel(state.dependencyRowsRaw, rootName);
-    state.dependencyGraph.model = model;
-    // Hierarchy View is the default so the opened asset sits at the top
-    // with its relationships flowing downward.
-    const view = state.dependencyGraph.currentView || "hierarchy";
-    (ui.dependencyViewButtons || []).forEach((btn) => {
-      btn.classList.toggle("active", btn.dataset.view === view);
-    });
-    applyDependencyLayout(model, view);
     renderDependencyGraph(model);
-    fitDependencyGraphToView();
   }
 
+  // Columns ASSET_TKT_REC_SMRY returns, in its SELECT order. Used as the header
+  // while loading and when the asset has no tickets, so the empty table looks
+  // like the Asset Allocation one (header + centred "No Record Found") instead
+  // of a bare message box; with tickets, the columns come from the rows.
+  const TICKETS_DEFAULT_COLUMNS = [
+    "Ticket ID",
+    "Request Title",
+    "Requester",
+    "Priority",
+    "Due Date",
+    "Assigned To",
+    "Created Date",
+    "Opened By",
+    "Status",
+    "Assigned To Team"
+  ];
+
   function getTicketsColumnsFromRows(rows) {
-    return buildDynamicColumnsFromRowKeys(rows, []);
+    const columns = buildDynamicColumnsFromRowKeys(rows, []);
+    return columns.length ? columns : TICKETS_DEFAULT_COLUMNS.slice();
   }
 
   function enrichTicketsRowSortValues(row, columns) {
@@ -4064,7 +5798,10 @@
               ? "↑"
               : "↓"
             : "↕";
-        return `<th class="is-sortable" data-tickets-sort-index="${index}" data-tickets-sort-key="${escapeHtml(
+        // .is-sorted is what keeps the glyph visible once a column is sorted
+        // (global.css reveals it on th:hover, th:focus-within or th.is-sorted).
+        const sortedClass = activeKey === column ? " is-sorted" : "";
+        return `<th class="is-sortable${sortedClass}" data-tickets-sort-index="${index}" data-tickets-sort-key="${escapeHtml(
           column
         )}"><span class="th-label">${escapeHtml(column)}</span><span class="th-sort-icon" aria-hidden="true">${arrow}</span></th>`;
       })
@@ -4083,8 +5820,8 @@
     if (!ui.ticketsTableBody) return;
     const cols = Array.isArray(columns) ? columns : [];
     if (!sortedRows.length) {
-      ui.ticketsTableBody.innerHTML =
-        `<tr><td colspan="${Math.max(cols.length, 1)}" class="tickets-empty">No Record Found</td></tr>`;
+      ui.ticketsTableBody.innerHTML = buildTableMessageRowHtml(cols.length, "No Record Found");
+      syncTableMessageWidths();
       return;
     }
     ui.ticketsTableBody.innerHTML = sortedRows
@@ -4114,7 +5851,7 @@
     const sortedRows = getSortedTicketsRows(sourceRows, columns);
     renderTicketsTableHead(columns);
     renderTicketsTableBody(sortedRows, columns);
-    refreshSerialGridTable(ui.ticketsTable, { resizeStorageKey: TICKETS_TABLE_RESIZE_KEY });
+    refreshSerialGridTable(ui.ticketsTable);
   }
 
   async function loadTicketsRows(details) {
@@ -4124,11 +5861,16 @@
       // on a first load - but the head is no longer wiped either: on a reload it
       // keeps the columns already on screen instead of collapsing the table to a
       // single "Loading..." cell and rebuilding it a moment later.
-      const knownColumns = Array.isArray(state.ticketsColumns) ? state.ticketsColumns : [];
-      if (knownColumns.length) renderTicketsTableHead(knownColumns);
-      const loadingSpan = Math.max(ui.ticketsTableHeadRow.children.length, 1);
-      ui.ticketsTableBody.innerHTML =
-        `<tr><td colspan="${loadingSpan}" class="tickets-empty">Loading...</td></tr>`;
+      // First load: the workflow's standard columns, so the loading state has
+      // a header like the Asset Allocation table.
+      const knownColumns =
+        Array.isArray(state.ticketsColumns) && state.ticketsColumns.length
+          ? state.ticketsColumns
+          : TICKETS_DEFAULT_COLUMNS;
+      renderTicketsTableHead(knownColumns);
+      ui.ticketsTableBody.innerHTML = buildTableLoadingRowHtml(knownColumns.length);
+      refreshSerialGridTable(ui.ticketsTable);
+      syncTableMessageWidths();
     }
     const assetRecordId = String(details.recordId || "").trim();
     if (!assetRecordId) {
@@ -4238,7 +5980,105 @@
         out[label] = parsed;
       }
     });
+    // View columns: each one gets its value under its own label (the grid reads
+    // cells by column key = label). The well-known allocation fields reuse the
+    // values resolved above (asset name, employee name, created-by name...);
+    // any other field is read from the row by every name it is known by.
+    getAllocationColumns().forEach((column) => {
+      if (!column.fromView) return;
+      out[column.key] = getAllocationViewColumnValue(flatRow, column, out);
+    });
     return out;
+  }
+
+  function getAllocationViewColumnValue(flatRow, column, mapped) {
+    const token = String(column.internalName || column.key).toLowerCase().replace(/[^a-z0-9]+/g, "");
+    const known = {
+      type: "Type",
+      category: "Category",
+      assetid: "Asset Name",
+      asset: "Asset Name",
+      assetname: "Asset Name",
+      employee: "Employee",
+      employees: "Employee",
+      assignedto: "Employee",
+      fromdate: "From Date",
+      todate: "To Date",
+      remarks: "Remarks",
+      remark: "Remarks",
+      comments: "Remarks",
+      createdby: "CreatedBy",
+      createdbyname: "CreatedBy",
+      createdbyguid: "CreatedBy",
+      acknowledgement: "Acknowledgement",
+      acknowledgment: "Acknowledgement"
+    };
+    if (known[token] && String(mapped[known[token]] || "").trim()) return mapped[known[token]];
+    const names = [
+      column.internalName,
+      column.fieldMeta && column.fieldMeta.DisplayName,
+      column.fieldMeta && column.fieldMeta.FieldName,
+      column.label
+    ]
+      .map((name) => String(name == null ? "" : name).trim())
+      .filter(Boolean);
+    /*
+     * Payload names for the columns the view and the data source spell
+     * differently. The allocation rows arrive inside the ASSET_DETAILS_SUMMARY
+     * response, which returns the audit columns as LastModifiedBy /
+     * LastModifiedDate, while the EAsset_Allocation view calls them
+     * ModifiedBy / ModifiedDate. None of the names above normalizes to
+     * "lastmodified...", so without these aliases the lookup matched nothing
+     * and both cells rendered empty even though the response carried the
+     * values. Keyed off every name the column is known by rather than one
+     * spelling, since the view's field name and its label can differ. Whatever
+     * the response holds is then shown as-is - nothing is resolved or
+     * substituted here.
+     */
+    const PAYLOAD_FIELD_ALIASES = {
+      modifiedby: "LastModifiedBy",
+      modifieddate: "LastModifiedDate"
+    };
+    names.slice().forEach((name) => {
+      const alias = PAYLOAD_FIELD_ALIASES[compactFieldKey(name)];
+      if (alias && !names.includes(alias)) names.push(alias);
+    });
+    let raw = getAllocationValueLoose(flatRow, names);
+    if (!raw) {
+      const keys = names.map(compactFieldKey).filter(Boolean);
+      const looseKey = Object.keys(flatRow || {}).find((key) => keys.includes(compactFieldKey(key)));
+      const value = looseKey ? flatRow[looseKey] : null;
+      raw = value == null || typeof value === "object" ? "" : String(value);
+    }
+    if (column.isDate) return raw || "";
+    return parseLookupLabel(raw) || "";
+  }
+
+  // Reads the EAsset_Allocation view once (ObjectGet -> ViewGet -> ViewFields by
+  // seq, display names - the Audit Log's logic) and makes it the grid's column
+  // set. Leaves the default columns in place if the view can't be read.
+  async function resolveAllocationViewColumns() {
+    if (Array.isArray(state.allocationColumns) && state.allocationColumns.length) return state.allocationColumns;
+    const context = await fetchChildRepositoryViewContext(ALLOCATION_REPOSITORY.repositoryObjectKey).catch(() => null);
+    const defs = context ? buildHistoryColumnDefsFromContext(context) : [];
+    if (!defs.length) return getAllocationColumns();
+    state.allocationColumns = defs.map((def) => {
+      const fieldMeta = getObjectFieldMeta({ Fields: context.fields }, def.internalName);
+      return {
+        key: def.label,
+        label: def.label,
+        internalName: def.internalName,
+        fieldMeta,
+        isDate: isDateFieldMeta(fieldMeta) || isDateLikeFieldName(def.label),
+        fromView: true
+      };
+    });
+    // A sort on a column the view does not have is dropped.
+    const sortKey = state.allocationSortState && state.allocationSortState.columnKey;
+    if (sortKey && !state.allocationColumns.some((column) => column.key === sortKey)) {
+      state.allocationSortState = { columnKey: null, columnIndex: null, direction: null };
+    }
+    return state.allocationColumns;
   }
 
   function parseSortDateValue(value) {
@@ -4246,19 +6086,6 @@
     if (!d) return null;
     const time = d.getTime();
     return Number.isNaN(time) ? null : time;
-  }
-
-  function formatUtcToUserDateDisplay(raw) {
-    const text = String(raw == null ? "" : raw).trim();
-    if (!text) return "";
-    // Date-only column: calendar date, no offset shift.
-    return formatUserDate(text) || text;
-  }
-
-  function formatUtcToUserDateTimeDisplay(raw, includeSeconds = true) {
-    const text = String(raw == null ? "" : raw).trim();
-    if (!text) return "";
-    return formatUserDateTime(text, includeSeconds) || text;
   }
 
   function isTicketsDateColumn(column) {
@@ -4269,21 +6096,24 @@
     return false;
   }
 
-  function isTicketsDateOnlyColumn(column) {
-    const token = normalizeFieldToken(column);
-    if (!token) return false;
-    if (TICKETS_DATE_ONLY_COLUMNS.some((name) => normalizeFieldToken(name) === token)) return true;
-    return false;
-  }
-
+  /**
+   * Tickets grid cell. Dates go through formatDateValueForDisplay(), the one
+   * date formatter the Summary, Other Details and Allocation grids already
+   * use, so a ticket date behaves like every other date on this page: shifted
+   * into the user's timezone, carrying the seconds the backend sent, and never
+   * inventing a clock time for a literal 00:00:00 placeholder. A column that
+   * is not a date is returned unchanged, as before.
+   *
+   * "Created Date" used to be forced down to a bare calendar date by a
+   * hardcoded TICKETS_DATE_ONLY_COLUMNS list. That dropped the time the API
+   * returns (Due Date, not on the list, showed its time all along) and, since
+   * the date-only path deliberately skips the timezone shift, it showed the
+   * previous day for any ticket created after 18:30 UTC.
+   */
   function formatTicketsCellDisplay(column, raw) {
     const text = String(raw == null ? "" : raw).trim();
     if (!text) return "";
-    if (!isTicketsDateColumn(column)) return escapeHtml(text);
-    if (isTicketsDateOnlyColumn(column)) {
-      return escapeHtml(formatUtcToUserDateDisplay(text));
-    }
-    return escapeHtml(formatUtcToUserDateTimeDisplay(text, true));
+    return escapeHtml(formatDateValueForDisplay(text, { label: column }) || text);
   }
 
   function destroySerialGridTableInstance(table) {
@@ -4300,7 +6130,9 @@
    * <colgroup>. It injects the .gt-col-resizer handles with their pipe separator,
    * draws the .gt-resize-line vertical guide while a column is being dragged,
    * snapshots every column at drag start so only the dragged border moves
-   * (Excel-style), and persists widths per data-resize-key. Sorting stays with
+   * (Excel-style). Widths are NOT saved or restored: no resizeStorageKey or
+   * data-resize-key is given, so every load starts from the computed sizing
+   * below (see clearLegacySavedColumnWidths). Sorting stays with
    * this page (sortable: false) because these tables sort through their own
    * render, not by reordering DOM rows.
    *
@@ -4312,9 +6144,29 @@
     if (!window.GridTable || typeof window.GridTable.create !== "function") return null;
     installGridResizeGuideClamp();
 
-    const opts = Object.assign({}, options || {});
-    const storageKey =
-      opts.resizeStorageKey || String(table.getAttribute("data-resize-key") || "").trim();
+    // Summary (Asset Allocation, Tickets) and Audit Log grids: every column is
+    // at least as wide as its full header name - so a view with many columns
+    // makes the table scroll sideways instead of cutting names to "Acknowl..." -
+    // and starts wide enough for its values (up to OTHER_DETAIL_VALUE_MAX_PX;
+    // longer values wrap). Same sizing as the Other Details grids. A column that
+    // can't be resized (Allocation's row-actions column) keeps its own width.
+    // Explicit options from the caller still win.
+    let sizing = null;
+    if (table === ui.historyLogTable) applyHistoryTableWrapHeight();
+    if (table === ui.allocationTable || table === ui.ticketsTable || table === ui.historyLogTable) {
+      sizing = getOtherDetailColumnSizing(table);
+      Array.from(table.querySelectorAll("thead th")).forEach((th, index) => {
+        if (!th.classList.contains("no-resize")) return;
+        sizing.columnWidths[index] = undefined;
+        sizing.columnMinWidths[index] = undefined;
+        sizing.columnMaxWidths[index] = undefined;
+      });
+      if (table === ui.historyLogTable) {
+        sizing.columnWidths = spreadHistoryWidthsToFillWrap(getHistoryBaseColumnWidths(sizing));
+      }
+    }
+    const opts = Object.assign({}, sizing || {}, options || {});
+    clearLegacySavedColumnWidths();
 
     destroySerialGridTableInstance(table);
     const instance = window.GridTable.create(
@@ -4331,11 +6183,253 @@
           noResizeClass: "no-resize"
         },
         opts,
-        { resizeStorageKey: storageKey }
+        { resizeStorageKey: "" }
       )
     );
     table.__gridTableInstance = instance || null;
     return instance;
+  }
+
+  /*
+   * Audit Log grid fitted to its scroll box, the way the Asset Inventory table
+   * is: when the columns' widths (measured, or dragged this visit) fall short of
+   * the wrap's visible width, the leftover is spread across them so a wide
+   * window leaves no gap on the right; when they don't fit, they are kept and
+   * the wrap scrolls sideways. Re-fitted on window resize and whenever the tab
+   * is shown again. Dragged widths live in memory only, never in localStorage.
+   */
+  let historyDraggedColumnWidths = null;
+  let historyColumnFitBound = false;
+
+  function getHistoryTableWrap() {
+    return ui.historyLogTable ? ui.historyLogTable.closest(".history-log-table-wrap") : null;
+  }
+
+  function getHistoryColumnSetKey() {
+    return (Array.isArray(state.historyColumns) ? state.historyColumns : []).join("\u0001");
+  }
+
+  // Widths dragged this visit while they still describe the same columns,
+  // otherwise the measured ones - never narrower than the full header name.
+  function getHistoryBaseColumnWidths(sizing) {
+    const widths = sizing.columnWidths || [];
+    const mins = sizing.columnMinWidths || [];
+    const dragged = historyDraggedColumnWidths;
+    if (
+      dragged &&
+      dragged.key === getHistoryColumnSetKey() &&
+      dragged.widths.length === widths.length &&
+      dragged.widths.every((w) => Number.isFinite(w) && w > 0)
+    ) {
+      return dragged.widths.map((w, index) => Math.max(w, mins[index] || 0));
+    }
+    return widths.slice();
+  }
+
+  function spreadHistoryWidthsToFillWrap(widths) {
+    const wrap = getHistoryTableWrap();
+    if (!wrap || !Array.isArray(widths) || !widths.length) return widths;
+    // clientWidth already excludes the wrap's borders and the vertical
+    // scrollbar's gutter; the 1px keeps rounding from forcing a sideways scroll.
+    const availableWidth = wrap.clientWidth - 1;
+    if (availableWidth <= 0) return widths;
+    const totalWidth = widths.reduce((sum, w) => sum + w, 0);
+    if (!totalWidth || totalWidth >= availableWidth) return widths;
+    const extra = availableWidth - totalWidth;
+    // Whole pixels that always sum to exactly `extra`.
+    const rawShares = widths.map((w) => (w / totalWidth) * extra);
+    const finalShares = rawShares.map((share) => Math.floor(share));
+    const remainder = extra - finalShares.reduce((sum, share) => sum + share, 0);
+    const byFractionDesc = rawShares
+      .map((share, index) => ({ index, frac: share - Math.floor(share) }))
+      .sort((a, b) => b.frac - a.frac);
+    for (let i = 0; i < remainder; i += 1) {
+      finalShares[byFractionDesc[i % byFractionDesc.length].index] += 1;
+    }
+    return widths.map((width, index) => width + finalShares[index]);
+  }
+
+  function refitHistoryColumnsToWrap() {
+    const table = ui.historyLogTable;
+    const wrap = getHistoryTableWrap();
+    if (!table || !wrap || !wrap.offsetParent || !table.__gridTableInstance) return;
+    if (!window.GridTable || typeof window.GridTable.applyColumnWidths !== "function") return;
+    if (document.body.classList.contains("is-column-resizing")) return;
+    const sizing = getOtherDetailColumnSizing(table);
+    const instance = table.__gridTableInstance;
+    if (instance.options) instance.options.columnMinWidths = sizing.columnMinWidths;
+    window.GridTable.applyColumnWidths(table, spreadHistoryWidthsToFillWrap(getHistoryBaseColumnWidths(sizing)));
+  }
+
+  /* Audit Log: viewport-fitted scroll box (same as the Asset Inventory table
+   * view). The wrap is sized to the viewport height left below its top edge,
+   * so the rows scroll inside it under the sticky header and the page itself
+   * never scrolls because of the grid.
+   *  - The top is measured from the document, not the viewport, so scrolling
+   *    the page can never change the grid's height.
+   *  - Everything laid out below the wrap (padding etc.) is measured, so the
+   *    wrap ends exactly at the page's bottom padding - no empty band.
+   *  - The host's 100vh min-height is lifted while the Audit Log is shown: in
+   *    the portal the page sits below the portal's top bar, so a 100vh page
+   *    overflowed by that bar's height and scrolled. Other tabs put it back. */
+  const HISTORY_TABLE_BOX_MIN_HEIGHT = 120;
+
+  function isHistoryTabShown() {
+    return Boolean(ui.historyCard && !ui.historyCard.hidden);
+  }
+
+  /** Height of everything laid out below `el` down to the page's bottom edge:
+   *  each ancestor's bottom padding + border and any visible in-flow siblings
+   *  after it. Fixed/absolute siblings (modals, overlays) take no space. */
+  function measureHistoryContentBelow(el) {
+    let total = parseFloat(getComputedStyle(el).marginBottom) || 0;
+    for (let node = el; node && node.parentElement && node !== document.body; node = node.parentElement) {
+      for (let sib = node.nextElementSibling; sib; sib = sib.nextElementSibling) {
+        const scs = getComputedStyle(sib);
+        if (scs.display === "none" || scs.position === "fixed" || scs.position === "absolute") continue;
+        total += sib.getBoundingClientRect().height + (parseFloat(scs.marginTop) || 0) + (parseFloat(scs.marginBottom) || 0);
+      }
+      const pcs = getComputedStyle(node.parentElement);
+      total += (parseFloat(pcs.paddingBottom) || 0) + (parseFloat(pcs.borderBottomWidth) || 0);
+    }
+    return Math.ceil(total);
+  }
+
+  function syncHistoryTableLayout() {
+    const host = document.getElementById("assetSerialDetailsAppHost");
+    if (!host) return;
+    const shown = isHistoryTabShown();
+    const minHeight = shown ? "0px" : "";
+    if (host.style.minHeight !== minHeight) host.style.minHeight = minHeight;
+    // flow-root keeps the page's top margin inside the host instead of
+    // collapsing through it onto <body> (a few px of page scroll).
+    const display = shown ? "flow-root" : "";
+    if (host.style.display !== display) host.style.display = display;
+  }
+
+  function applyHistoryTableWrapHeight() {
+    syncHistoryTableLayout();
+    const wrap = getHistoryTableWrap();
+    if (!wrap || !isHistoryTabShown() || !wrap.offsetParent) return;
+    const viewportHeight = window.innerHeight || document.documentElement.clientHeight || 0;
+    const top = wrap.getBoundingClientRect().top + (window.scrollY || window.pageYOffset || 0);
+    const height = Math.max(
+      HISTORY_TABLE_BOX_MIN_HEIGHT,
+      Math.floor(viewportHeight - top - measureHistoryContentBelow(wrap))
+    );
+    const px = `${height}px`;
+    if (wrap.style.height !== px) wrap.style.height = px;
+    if (wrap.style.maxHeight !== px) wrap.style.maxHeight = px;
+  }
+
+  // Height first (it decides whether the vertical scrollbar takes width),
+  // then the columns are fitted to the width that is left.
+  function fitHistoryGridToViewport() {
+    applyHistoryTableWrapHeight();
+    refitHistoryColumnsToWrap();
+  }
+
+  function bindHistoryColumnFit() {
+    if (historyColumnFitBound) return;
+    historyColumnFitBound = true;
+    let resizeFrame = 0;
+    window.addEventListener(
+      "resize",
+      () => {
+        // Resize and browser zoom both land here.
+        applyHistoryTableWrapHeight();
+        if (resizeFrame) cancelAnimationFrame(resizeFrame);
+        resizeFrame = requestAnimationFrame(() => {
+          resizeFrame = 0;
+          refitHistoryColumnsToWrap();
+        });
+      },
+      { passive: true }
+    );
+    // Anything above the grid changing height (header wrapping, the web font
+    // arriving, the summary meta filling in) moves its top edge. Re-sized from
+    // the observer callback, which runs after layout but before paint.
+    const wrap = getHistoryTableWrap();
+    // Asset Inventory's grid-box scrollbars (global.css), whatever markup the
+    // portal mounted - see .history-log-table-wrap in asset-serial-details.css.
+    if (wrap) {
+      wrap.classList.remove("qaf-scrollbar-thin");
+      wrap.classList.add("qaf-scrollbar-10");
+    }
+    if (typeof ResizeObserver === "function" && wrap) {
+      // The wrap's own width can change without a window resize (the nav dock
+      // opening or closing): refit the columns to the new scroll area.
+      let wrapWidth = Math.round(wrap.clientWidth);
+      let wrapFrame = 0;
+      new ResizeObserver(() => {
+        const width = Math.round(wrap.clientWidth);
+        if (width === wrapWidth) return;
+        wrapWidth = width;
+        if (wrapFrame) cancelAnimationFrame(wrapFrame);
+        wrapFrame = requestAnimationFrame(() => {
+          wrapFrame = 0;
+          refitHistoryColumnsToWrap();
+        });
+      }).observe(wrap);
+      const heights = new Map();
+      const observer = new ResizeObserver((entries) => {
+        let moved = false;
+        entries.forEach((entry) => {
+          const h = Math.round(entry.contentRect.height);
+          if (heights.get(entry.target) !== h) {
+            heights.set(entry.target, h);
+            moved = true;
+          }
+        });
+        if (moved) applyHistoryTableWrapHeight();
+      });
+      for (let node = wrap; node && node.parentElement && node !== document.body; node = node.parentElement) {
+        for (let sib = node.previousElementSibling; sib; sib = sib.previousElementSibling) observer.observe(sib);
+      }
+    }
+    let dragging = false;
+    document.addEventListener(
+      "mousedown",
+      (event) => {
+        const handle = event.target && event.target.closest && event.target.closest(".gt-col-resizer");
+        dragging = Boolean(handle && ui.historyLogTable && ui.historyLogTable.contains(handle));
+      },
+      true
+    );
+    document.addEventListener("mouseup", () => {
+      if (!dragging) return;
+      dragging = false;
+      // After GridTable's own mouseup has applied the final widths.
+      setTimeout(() => {
+        if (!ui.historyLogTable || !window.GridTable || typeof window.GridTable.getColumnWidths !== "function") return;
+        historyDraggedColumnWidths = {
+          key: getHistoryColumnSetKey(),
+          widths: window.GridTable.getColumnWidths(ui.historyLogTable).map(Number)
+        };
+      }, 0);
+    });
+  }
+
+  /**
+   * Column widths used to be remembered in localStorage under
+   * "gridtable:widths:<key>". They are no longer read or written; this removes
+   * the entries a browser saved earlier, once per page load.
+   */
+  let legacyColumnWidthsCleared = false;
+  function clearLegacySavedColumnWidths() {
+    if (legacyColumnWidthsCleared) return;
+    legacyColumnWidthsCleared = true;
+    try {
+      if (!window.localStorage) return;
+      const stale = [];
+      for (let i = 0; i < window.localStorage.length; i += 1) {
+        const key = window.localStorage.key(i);
+        if (key && LEGACY_COLUMN_WIDTH_KEY_PATTERN.test(key)) stale.push(key);
+      }
+      stale.forEach((key) => window.localStorage.removeItem(key));
+    } catch (_) {
+      // Storage unavailable (private mode / blocked): nothing to clear.
+    }
   }
 
   /**
@@ -4433,7 +6527,7 @@
   }
 
   function getAllocationColumnDef(columnKey) {
-    return ALLOCATION_GRID_COLUMNS.find((col) => col.key === columnKey) || null;
+    return getAllocationColumns().find((col) => col.key === columnKey) || null;
   }
 
   function compareAllocationSortValues(aValue, bValue, columnKey) {
@@ -4460,8 +6554,9 @@
   function enrichAllocationRowSortValues(row) {
     if (!row || typeof row !== "object") return row;
     const sortValues = {};
-    for (let i = 0; i < ALLOCATION_GRID_COLUMNS.length; i += 1) {
-      const col = ALLOCATION_GRID_COLUMNS[i];
+    const allocationColumns = getAllocationColumns();
+    for (let i = 0; i < allocationColumns.length; i += 1) {
+      const col = allocationColumns[i];
       const raw = resolveOtherDetailCellValue(row, col.key);
       if (col.isDate) {
         const parsed = parseSortDateValue(raw);
@@ -4577,7 +6672,7 @@
 
   function renderAllocationTableHead() {
     if (!ui.allocationTableHeadRow) return;
-    const columns = ALLOCATION_GRID_COLUMNS;
+    const columns = getAllocationColumns();
     const activeKey =
       state.allocationSortState && state.allocationSortState.direction
         ? state.allocationSortState.columnKey
@@ -4591,7 +6686,10 @@
               ? "↑"
               : "↓"
             : "↕";
-        return `<th class="is-sortable" data-allocation-sort-index="${index}" data-allocation-sort-key="${escapeHtml(
+        // .is-sorted is what keeps the glyph visible once a column is sorted
+        // (global.css reveals it on th:hover, th:focus-within or th.is-sorted).
+        const sortedClass = activeKey === column.key ? " is-sorted" : "";
+        return `<th class="is-sortable${sortedClass}" data-allocation-sort-index="${index}" data-allocation-sort-key="${escapeHtml(
           column.key
         )}"><span class="th-label">${escapeHtml(column.label)}</span><span class="th-sort-icon" aria-hidden="true">${arrow}</span></th>`;
       })
@@ -4615,10 +6713,11 @@
 
   function renderAllocationTableBody(sortedRows) {
     if (!ui.allocationTableBody) return;
-    const columns = ALLOCATION_GRID_COLUMNS;
+    const columns = getAllocationColumns();
     const colCount = columns.length + 1;
     if (!sortedRows.length) {
-      ui.allocationTableBody.innerHTML = `<tr><td colspan="${colCount}" class="allocation-empty">No Record Found</td></tr>`;
+      ui.allocationTableBody.innerHTML = buildTableMessageRowHtml(colCount, "No Record Found");
+      syncTableMessageWidths();
       return;
     }
     ui.allocationTableBody.innerHTML = sortedRows
@@ -4646,7 +6745,7 @@
         const cells = columns
           .map((column) => {
             const raw = resolveOtherDetailCellValue(row, column.key) || "";
-            if (column.key === "Remarks") {
+            if (isAllocationRemarksColumn(column)) {
               const text = String(raw).trim();
               if (!text) {
                 return `<td class="allocation-remarks-cell"></td>`;
@@ -4655,12 +6754,21 @@
               return `<td class="allocation-remarks-cell"><span class="allocation-remarks-cell__text">${escaped}</span></td>`;
             }
             if (column.isDate) {
-              const display = formatUtcToUserDateDisplay(raw) || String(raw).trim();
+              // Same rule as every other date on this page: a DateOnly field
+              // shows its calendar date, a DateTime field shows the time and
+              // seconds the backend actually sent, and a literal 00:00:00
+              // placeholder stays a date - no time is invented here.
+              const display =
+                formatDateValueForDisplay(raw, {
+                  label: column.label || column.key,
+                  internalName: column.internalName || column.key,
+                  fieldMeta: column.fieldMeta
+                }) || String(raw).trim();
               return `<td>${escapeHtml(display)}</td>`;
             }
             const display = formatCellDisplayMarkup(raw, {
               columnLabel: column.label || column.key,
-              internalName: column.key
+              internalName: column.internalName || column.key
             });
             return `<td>${display}</td>`;
           })
@@ -4672,12 +6780,11 @@
 
   function renderAllocationGrid() {
     if (!ui.allocationTableBody || !ui.allocationTableHeadRow) return;
-    hideAllocationRemarksTooltip();
     renderAllocationTableHead();
     const sortedRows = getSortedAllocationRows(state.allocationRowsRaw || []);
     renderAllocationTableBody(sortedRows);
     scheduleAllocationMenuPosition();
-    refreshSerialGridTable(ui.allocationTable, { resizeStorageKey: ALLOCATION_TABLE_RESIZE_KEY });
+    refreshSerialGridTable(ui.allocationTable);
   }
 
   function getAllocationRepositoryTargets() {
@@ -4842,72 +6949,13 @@
     }
   }
 
-  let allocationRemarksTooltipEl = null;
-
-  function ensureAllocationRemarksTooltip() {
-    if (!allocationRemarksTooltipEl) {
-      allocationRemarksTooltipEl = document.createElement("div");
-      allocationRemarksTooltipEl.className = "allocation-remarks-tooltip-float";
-      allocationRemarksTooltipEl.setAttribute("role", "tooltip");
-      allocationRemarksTooltipEl.hidden = true;
-      const host = document.getElementById("assetSerialDetailsAppHost") || document.body;
-      host.appendChild(allocationRemarksTooltipEl);
-    }
-    return allocationRemarksTooltipEl;
-  }
-
-  function hideAllocationRemarksTooltip() {
-    if (!allocationRemarksTooltipEl) return;
-    allocationRemarksTooltipEl.hidden = true;
-  }
-
-  function showAllocationRemarksTooltip(textEl) {
-    const text = String((textEl && textEl.textContent) || "").trim();
-    if (!text) {
-      hideAllocationRemarksTooltip();
-      return;
-    }
-    const tooltip = ensureAllocationRemarksTooltip();
-    tooltip.textContent = text;
-    tooltip.hidden = false;
-    const anchorRect = textEl.getBoundingClientRect();
-    const gap = 8;
-    let top = anchorRect.bottom + gap;
-    let left = anchorRect.left;
-    tooltip.style.left = `${left}px`;
-    tooltip.style.top = `${top}px`;
-    const tooltipRect = tooltip.getBoundingClientRect();
-    if (tooltipRect.right > window.innerWidth - 8) {
-      left = Math.max(8, window.innerWidth - tooltipRect.width - 8);
-      tooltip.style.left = `${left}px`;
-    }
-    if (tooltipRect.bottom > window.innerHeight - 8) {
-      top = Math.max(8, anchorRect.top - tooltipRect.height - gap);
-      tooltip.style.top = `${top}px`;
-    }
-  }
-
-  function onAllocationRemarksPointerOver(event) {
-    const textEl = event.target.closest(".allocation-remarks-cell__text");
-    if (!textEl || !ui.allocationTableBody || !ui.allocationTableBody.contains(textEl)) return;
-    showAllocationRemarksTooltip(textEl);
-  }
-
-  function onAllocationRemarksPointerOut(event) {
-    const textEl = event.target.closest(".allocation-remarks-cell__text");
-    if (!textEl) return;
-    hideAllocationRemarksTooltip();
-  }
-
   function onAllocationMenuScroll() {
-    hideAllocationRemarksTooltip();
     if (state.activeAllocationMenuRecordKey) {
       closeAllocationRowMenu();
     }
   }
 
   function onAllocationMenuResize() {
-    hideAllocationRemarksTooltip();
     if (!state.activeAllocationMenuRecordKey) return;
     scheduleAllocationMenuPosition();
   }
@@ -4916,8 +6964,6 @@
     if (allocationGridEventsBound) return;
     allocationGridEventsBound = true;
     ui.allocationSection?.addEventListener("click", onAllocationSectionClick);
-    ui.allocationSection?.addEventListener("pointerover", onAllocationRemarksPointerOver);
-    ui.allocationSection?.addEventListener("pointerout", onAllocationRemarksPointerOut);
     document.addEventListener("click", onDocumentClickCloseAllocationMenu);
     window.addEventListener("scroll", onAllocationMenuScroll, { passive: true });
     window.addEventListener("resize", onAllocationMenuResize);
@@ -4930,7 +6976,6 @@
     state.latestDetailsForAllocation = details;
     bindAllocationGridEvents();
 
-    const allocationColCount = ALLOCATION_GRID_COLUMNS.length + 1;
     if (ui.allocationTableBody && ui.allocationTableHeadRow) {
       // Loading shows in the body only. Collapsing the head into a single
       // "Loading..." cell shrank the table to two columns and read as the table
@@ -4938,9 +6983,20 @@
       // head (and attaching GridTable to it) means the columns are already at
       // their final widths when the data arrives.
       renderAllocationTableHead();
-      ui.allocationTableBody.innerHTML =
-        `<tr><td colspan="${allocationColCount}" class="allocation-empty">Loading...</td></tr>`;
-      refreshSerialGridTable(ui.allocationTable, { resizeStorageKey: ALLOCATION_TABLE_RESIZE_KEY });
+      ui.allocationTableBody.innerHTML = buildTableLoadingRowHtml(getAllocationColumns().length + 1);
+      refreshSerialGridTable(ui.allocationTable);
+      syncTableMessageWidths();
+    }
+
+    // Columns as per the EAsset_Allocation view (read once; the default set
+    // stays if it can't be read).
+    const columnsBefore = getAllocationColumns();
+    await resolveAllocationViewColumns();
+    if (getAllocationColumns() !== columnsBefore && ui.allocationTableBody && ui.allocationTableHeadRow) {
+      renderAllocationTableHead();
+      ui.allocationTableBody.innerHTML = buildTableLoadingRowHtml(getAllocationColumns().length + 1);
+      refreshSerialGridTable(ui.allocationTable);
+      syncTableMessageWidths();
     }
 
     const assetRecordId = String(details.recordId || "").trim();
@@ -4957,11 +7013,21 @@
     if (rawRows.length) {
       const flatRows = rawRows.map((row) => flattenRecord(row));
       await ensureEmployeeDirectoryForAllocation(flatRows).catch(() => {});
-      rows = flatRows.map((row, index) => {
-        const mapped = mapAllocationRow(row, details);
-        mapped.__repoIndex = index;
-        return mapped;
-      });
+      const columns = getAllocationColumns();
+      rows = flatRows
+        .map((row, index) => {
+          const mapped = mapAllocationRow(row, details);
+          mapped.__repoIndex = index;
+          return mapped;
+        })
+        // A row with nothing in any shown column and no record behind it (so no
+        // View/Edit either) would only be a blank line - it is left out, so an
+        // asset without allocations reads "No Record Found".
+        .filter(
+          (row) =>
+            String(row.__recordID || "").trim() ||
+            columns.some((column) => String(resolveOtherDetailCellValue(row, column.key) || "").trim())
+        );
     }
 
     rows.forEach((row) => enrichAllocationRowSortValues(row));
@@ -4981,18 +7047,42 @@
     if (!recordId) throw new Error("Missing asset record id.");
 
     const onEditDone = function () {
-      state.tabLoaded.summaryPanel = false;
-      loadParentAssetDetails(normalizeAssetDetails())
+      // The edit form can report "done" more than once (save, then close); one
+      // reload serves them all instead of re-reading everything per callback.
+      if (state.summaryReloadPromise) return;
+      // The three dots stand in for the summary fields while they are re-read;
+      // the fields on screen are set aside and put back if the reload fails.
+      const previousSummary = ui.summarySections ? document.createDocumentFragment() : null;
+      if (previousSummary) {
+        while (ui.summarySections.firstChild) previousSummary.appendChild(ui.summarySections.firstChild);
+        ui.summarySections.innerHTML = buildLoaderHtml();
+      }
+      state.summaryReloadPromise = loadParentAssetDetails(normalizeAssetDetails())
         .then(async (updated) => {
           state.pageDetails = updated;
           await ensureEmployeeDirectoryForSummary(updated.asset).catch(() => {});
           await ensureQafUsersDirectoryForSummary(updated.asset).catch(() => {});
           renderSummaryMeta(updated);
           renderSummaryFields(updated);
-          loadAllocationRows(updated).catch(() => {});
-          loadTicketsRows(updated).catch(() => {});
+          // Allocation + Tickets are re-read through the Summary tab's own
+          // loader (ensureTabDataLoaded), same calls and error handling as the
+          // first load. Going around it left the tab marked "not loaded" for
+          // good, so every later visit to the Summary tab fetched them again,
+          // and a tab click during the reload fetched them twice.
+          const pending = state.tabLoadPromises.summaryPanel;
+          if (pending) await pending.catch(() => {});
+          state.tabLoaded.summaryPanel = false;
+          ensureTabDataLoaded("summaryPanel");
         })
-        .catch(() => {});
+        .catch(() => {
+          if (previousSummary && ui.summarySections && ui.summarySections.querySelector(".qaf-loader")) {
+            ui.summarySections.innerHTML = "";
+            ui.summarySections.appendChild(previousSummary);
+          }
+        })
+        .finally(() => {
+          state.summaryReloadPromise = null;
+        });
     };
 
     const qafPageService = getQafPageService();
@@ -5172,6 +7262,7 @@
   }
 
   function activateTab(targetPanelId) {
+    closeDependencyPopup();
     ui.tabs.forEach((tab) => {
       const isActive = tab.getAttribute("data-tab-target") === targetPanelId;
       tab.classList.toggle("is-active", isActive);
@@ -5199,11 +7290,17 @@
 
     syncAssetEditBtnVisibility(targetPanelId);
     ensureTabDataLoaded(targetPanelId);
+    // The window may have been resized while the Audit Log was hidden; other
+    // tabs get the host's own min-height back.
+    if (targetPanelId === "historyPanel") fitHistoryGridToViewport();
+    else syncHistoryTableLayout();
   }
 
   function bindTabs() {
     ui.tabs.forEach((tab) => {
       tab.addEventListener("click", () => {
+        // Only the copy that owns the page switches tabs (and loads their data).
+        if (!isActiveAssetDetailsInstance()) return;
         const targetPanelId = String(tab.getAttribute("data-tab-target") || "").trim();
         if (!targetPanelId) return;
         activateTab(targetPanelId);
@@ -5212,6 +7309,8 @@
   }
 
   function ensureTabDataLoaded(targetPanelId) {
+    // A newer copy of this script owns the page now (see the top of the file).
+    if (!isActiveAssetDetailsInstance()) return;
     const details = state.pageDetails;
     if (!details) return;
     if (state.tabLoaded[targetPanelId]) return;
@@ -5373,8 +7472,20 @@
     return { type, inverse, recordId, guid: recordId };
   }
 
-  async function ensureRelationshipTypeOptionsLoaded() {
-    if (state.relationship.typeOptionsLoaded || state.relationship.typeOptionsLoading) return;
+  // A second open while the list is still loading waits for that same request
+  // (it used to return at once, with no options, and the list stayed empty).
+  let relationshipTypeOptionsPromise = null;
+  function ensureRelationshipTypeOptionsLoaded() {
+    if (state.relationship.typeOptionsLoaded) return Promise.resolve();
+    if (!relationshipTypeOptionsPromise) {
+      relationshipTypeOptionsPromise = loadRelationshipTypeOptions().finally(() => {
+        relationshipTypeOptionsPromise = null;
+      });
+    }
+    return relationshipTypeOptionsPromise;
+  }
+
+  async function loadRelationshipTypeOptions() {
     state.relationship.typeOptionsLoading = true;
     try {
       const rows = await fetchRnspRows(ADD_RELATIONSHIP_TYPE_RNSP_NAME, {});
@@ -5413,8 +7524,19 @@
     return String(id || getFilterRowName(row) || "").trim();
   }
 
-  async function ensureDependencyFilterRowsLoaded() {
-    if (state.relationship.filterRowsLoaded || state.relationship.filterRowsLoading) return;
+  // Same shared-request pattern as ensureRelationshipTypeOptionsLoaded.
+  let dependencyFilterRowsPromise = null;
+  function ensureDependencyFilterRowsLoaded() {
+    if (state.relationship.filterRowsLoaded) return Promise.resolve();
+    if (!dependencyFilterRowsPromise) {
+      dependencyFilterRowsPromise = loadDependencyFilterRows().finally(() => {
+        dependencyFilterRowsPromise = null;
+      });
+    }
+    return dependencyFilterRowsPromise;
+  }
+
+  async function loadDependencyFilterRows() {
     state.relationship.filterRowsLoading = true;
     try {
       const rows = await fetchRnspRows(ASSET_DEPENDENCY_FILTER_RNSP_NAME, {});
@@ -5709,15 +7831,30 @@
    *    TypeParam             = the selected Type, or "ALL",
    *    CategoryParam         = the selected Category, or "ALL".
    *  A real selection is always sent verbatim, including values like "-". */
-  async function fetchAssetDependencyEAssetData(typeParam, categoryParam) {
+  /* The last Destination CI result, keyed by its exact args. Re-opening the
+   * panel with the same Type / Category reuses it instead of sending the same
+   * request again; a different selection, or a saved relationship (which
+   * changes who can be a destination - see invalidateDestinationCandidates),
+   * fetches afresh. Concurrent identical requests share one call. */
+  let destinationCandidatesCache = { key: "", promise: null };
+
+  function invalidateDestinationCandidates() {
+    destinationCandidatesCache = { key: "", promise: null };
+  }
+
+  function fetchAssetDependencyEAssetData(typeParam, categoryParam) {
     const details = state.pageDetails || {};
     const selectedRecordId = String(
       details.recordId || getUrlParamCaseInsensitive("recordId") || ""
     ).trim();
     const type = String(typeParam == null ? "" : typeParam).trim();
     const category = String(categoryParam == null ? "" : categoryParam).trim();
+    const key = JSON.stringify([selectedRecordId, type || "ALL", category || "ALL"]);
+    if (destinationCandidatesCache.key === key && destinationCandidatesCache.promise) {
+      return destinationCandidatesCache.promise;
+    }
 
-    return fetchRnspRows(
+    const promise = fetchRnspRows(
       ASSET_DEPENDENCY_EASSET_DATA_RNSP_NAME,
       {
         SelectedRecordIDParam: selectedRecordId,
@@ -5729,7 +7866,16 @@
       // The RNSP can return its rows in batches; every batch is kept, so
       // the full result set is displayed rather than just the first 100.
       { allBatches: true }
-    );
+    ).then((rows) => {
+      // fetchRnspRows answers [] on a failed call too, so an empty result is
+      // not kept: the next open asks again rather than reusing a failure.
+      if (!(Array.isArray(rows) && rows.length) && destinationCandidatesCache.promise === promise) {
+        invalidateDestinationCandidates();
+      }
+      return rows;
+    });
+    destinationCandidatesCache = { key, promise };
+    return promise;
   }
 
   /** Applies the currently selected Type/Category filter values to the
@@ -5996,7 +8142,7 @@
   }
 
   function openAddRelationshipModal() {
-    if (!ui.addRelationshipModal) return;
+    if (!ui.addRelationshipModal || !canAddRelationship()) return;
     resetAddRelationshipModal();
     ui.addRelationshipModal.hidden = false;
     document.body.classList.add("rel-modal-open");
@@ -6431,6 +8577,9 @@
       }
 
       closeAddRelationshipModal();
+      // New relationships change which assets can be a destination: the next
+      // open of the Destination CI list asks the server again.
+      invalidateDestinationCandidates();
       // Single refresh after all records are saved, so the new
       // relationships appear immediately without extra round trips.
       try {
@@ -6454,7 +8603,13 @@
     initRelDestFilterSelects();
 
     if (ui.addRelationshipBtn) {
-      ui.addRelationshipBtn.addEventListener("click", openAddRelationshipModal);
+      if (canAddRelationship()) {
+        ui.addRelationshipBtn.addEventListener("click", openAddRelationshipModal);
+      } else {
+        // Removed (not just hidden): the button's CSS sets display, which
+        // would override the [hidden] attribute.
+        ui.addRelationshipBtn.remove();
+      }
     }
 
     // Relationship Type and Reverse Relationship stay mirrored: choosing a
@@ -6577,11 +8732,10 @@
   // elsewhere (summary cells, dependency nodes, select options) carries no
   // marker and is never read, rewritten or removed.
   const ELLIPSIS_TITLE_MARKER = "data-ellipsis-title";
-  // Elements with a richer hover affordance of their own: the allocation
-  // Remarks cell has a floating tooltip, the audit log Comments cell a
-  // "...more" modal. A native title on top of those would double up.
-  const ELLIPSIS_TITLE_SKIP_SELECTOR =
-    ".allocation-remarks-cell, .history-log-comment-cell, .gt-col-resizer, .th-sort-icon";
+  // Elements with a richer hover affordance of their own: the audit log
+  // Comments cell has a "...more" modal. A native title on top of that would
+  // double up.
+  const ELLIPSIS_TITLE_SKIP_SELECTOR = ".history-log-comment-cell, .gt-col-resizer, .th-sort-icon";
   const ELLIPSIS_TITLE_MAX_DEPTH = 6;
   const ELLIPSIS_TITLE_MAX_CELL_CHILDREN = 12;
 
@@ -6711,7 +8865,9 @@
       }
       await ensureEmployeeDirectoryForSummary(details.asset);
       await ensureQafUsersDirectoryForSummary(details.asset);
-      state.currentUserIsAssetManager = await checkCurrentUserIsAssetManager(details.asset).catch(() => false);
+      state.currentUserIsAssetManager = await checkCurrentUserIsAssetManager(
+        await getAssetForManagerCheck(details)
+      ).catch(() => false);
       renderSummaryMeta(details);
       syncAssetEditBtnVisibility("summaryPanel");
       renderSummaryFields(details);

@@ -1,0 +1,65 @@
+/* Shared section tab navigation ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â matches Settings tab implementation */
+
+:root {
+  --qaf-tab-font: "Poppins", var(--font-family-base, system-ui, -apple-system, "Segoe UI", sans-serif);
+  --qaf-tab-line: #c8ccd4;
+  --qaf-tab-ink: #222a37;
+  --qaf-tab-ink-active: #1a1d24;
+  --qaf-tab-space-md: 16px;
+}
+
+.settings-tabs-header {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: var(--qaf-tab-space-md);
+  padding: 10px 0 0;
+  border-bottom: 1px solid var(--qaf-tab-line);
+}
+
+.settings-tabs {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding-top: 4px;
+  padding-left: 0;
+  overflow-x: auto;
+  scrollbar-width: thin;
+  border-bottom: 0 !important;
+}
+
+.settings-tab {
+  min-width: 96px;
+  height: 36px;
+  border: 0 !important;
+  border-radius: 0 !important;
+  border-bottom: 2px solid transparent !important;
+  background: transparent !important;
+  font-family: var(--qaf-tab-font);
+  color: var(--qaf-tab-ink);
+  font-size: 13px;
+  font-weight: 400;
+  cursor: pointer;
+  white-space: nowrap;
+  padding: 0;
+  min-height: 0;
+  line-height: normal;
+  transition: border-bottom-color 150ms ease, color 150ms ease;
+}
+
+.settings-tab:hover {
+  color: var(--qaf-tab-ink-active);
+}
+
+.settings-tab.is-active {
+  border-bottom-color: var(--qaf-tab-ink-active) !important;
+  color: var(--qaf-tab-ink-active);
+  font-weight: 400;
+}
+
+@media (max-width: 1100px) {
+  .settings-tab {
+    min-width: 84px;
+    font-size: 13px;
+  }
+}

@@ -6,32 +6,49 @@
   /* ------------------------------------------------------------------ */
 
   var NAV_MENU_ITEMS = [
-    { MenuId: 1, DisplayName: "Asset Dashboard", Url: "/pages/AssetDashboard", Sequence: 1, Icon: "fa fa-tachometer", IconColor: "rgb(236, 80, 110)" },
+    { MenuId: 2, DisplayName: "Asset Inventory", Url: "/pages/AssetInventory", Sequence: 1, PageTitle: "Asset Inventory", Icon: "fa fa-minus-circle", IconColor: "rgb(78, 204, 253)" },
 
-    { MenuId: 2, DisplayName: "Asset Inventory", Url: "/pages/AssetInventory", Sequence: 2, PageTitle: "Asset Inventory", Icon: "fa fa-minus-circle", IconColor: "rgb(78, 204, 253)" },
+    { MenuId: 6, DisplayName: "Asset Search", Url: "/pages/AssetSearch", Sequence: 2, PageTitle: "Asset Search", Icon: "fa fa-search", IconColor: "rgb(136, 60, 208)" },
 
-    { MenuId: 3, DisplayName: "Asset Requisition", Url: "/pages/AssetRequisition", Sequence: 3, Icon: "fa fa-podcast", IconColor: "rgb(58, 134, 255)" },
+    { MenuId: 7, DisplayName: "Contracts & Vendors", Url: "/pages/Contracts&Vendors", Sequence: 3, PageTitle: "Contracts & Vendors", Icon: "fa fa-file-text-o", IconColor: "rgb(34, 197, 94)" },
 
-    { MenuId: 6, DisplayName: "Asset Search", Url: "/pages/AssetSearch", Sequence: 6, PageTitle: "Asset Search", Icon: "fa fa-search", IconColor: "rgb(136, 60, 208)" },
+    { MenuId: 8, DisplayName: "Software Licenses", Url: "/pages/SoftwareLicenses", Sequence: 4, PageTitle: "Software Licenses", Icon: "fa fa-key", IconColor: "rgb(79, 70, 229)" },
 
-    { MenuId: 7, DisplayName: "Contracts & Vendors", Url: "/pages/Contracts&Vendors", Sequence: 7, PageTitle: "Contracts & Vendors", Icon: "fa fa-file-text-o", IconColor: "rgb(34, 197, 94)" },
-
-    { MenuId: 8, DisplayName: "Software Licenses", Url: "/pages/SoftwareLicenses", Sequence: 8, PageTitle: "Software Licenses", Icon: "fa fa-key", IconColor: "rgb(79, 70, 229)" },
+    /* Moved here per request: Asset Requisition now sits directly below
+       Software Licenses and above Analytics (was Sequence 3, right after
+       Asset Inventory). MenuId is unchanged, so any permission list
+       referencing MenuId 3 elsewhere in this file is unaffected — only
+       this item's position/Sequence moved. */
+    { MenuId: 3, DisplayName: "Asset Requisition", Url: "/pages/AssetRequisition", Sequence: 5, Icon: "fa fa-podcast", IconColor: "rgb(58, 134, 255)" },
 
     /* "Analytics" dropdown — groups the aging/lifecycle and asset value
        pages under one collapsible parent instead of two top-level items. */
     {
       MenuId: 100,
       DisplayName: "Analytics",
-      Sequence: 9,
+      Sequence: 6,
       PageTitle: "Analytics",
       Icon: "fa fa-bar-chart",
       IconColor: "rgb(245, 158, 11)",
 
       Children: [
-        { MenuId: 9, DisplayName: "Aging & Lifecycle", Url: "/pages/AgingLifecycle", Sequence: 1, PageTitle: "Aging & Lifecycle", Icon: "fa fa-hourglass-half", IconColor: "rgb(245, 158, 11)" },
+        /* Moved here per request: Asset Dashboard now sits inside Analytics
+           as the first child (was top-level, Sequence 1, MenuId unchanged).
+           Every other child's Sequence shifted down by one to make room. */
+        { MenuId: 1, DisplayName: "Asset Dashboard", Url: "/pages/AssetDashboard", Sequence: 1, Icon: "fa fa-tachometer", IconColor: "rgb(236, 80, 110)" },
 
-        { MenuId: 10, DisplayName: "Asset Value Dashboard", Url: "/pages/AssetValueDashboard", Sequence: 2, PageTitle: "Asset Value Dashboard", Icon: "fa fa-line-chart", IconColor: "rgb(37, 99, 235)" },
+        { MenuId: 9, DisplayName: "Aging & Lifecycle", Url: "/pages/AgingLifecycle", Sequence: 2, PageTitle: "Aging & Lifecycle", Icon: "fa fa-hourglass-half", IconColor: "rgb(245, 158, 11)" },
+
+        { MenuId: 10, DisplayName: "Asset Value Dashboard", Url: "/pages/AssetValueDashboard", Sequence: 3, PageTitle: "Asset Value Dashboard", Icon: "fa fa-line-chart", IconColor: "rgb(37, 99, 235)" },
+
+        /* New — Lease Asset Dashboard, placed directly after Asset Value
+           Dashboard per request. MenuId 13 is the next free id (12 was the
+           highest already in use); Sequence 4 keeps it last within
+           Analytics. Adjust Url below if the real deployed route differs —
+           isNavItemActive() highlights this entry by checking whether
+           window.location.pathname contains this Url (case-insensitive),
+           so the two need to match once this page is actually deployed. */
+        { MenuId: 13, DisplayName: "Lease Asset Dashboard", Url: "/pages/LeaseAssetDashboard", Sequence: 4, PageTitle: "Lease Asset Dashboard", Icon: "fa fa-building", IconColor: "rgb(139, 124, 246)" },
       ],
     },
 
@@ -50,7 +67,7 @@
   var ASSET_EDIT_NEW_LP = "22-2";
   var ASSET_READ_ONLY_NEW_LP = "22-1";
 
-  var FULL_ACCESS_MENU_IDS = [1, 2, 3, 6, 7, 8, 9, 10, 11, 12];
+  var FULL_ACCESS_MENU_IDS = [1, 2, 3, 6, 7, 8, 9, 10, 11, 12, 13];
   var LIMITED_ACCESS_MENU_IDS = [2, 3, 6];
 
   /* ------------------------------------------------------------------ */

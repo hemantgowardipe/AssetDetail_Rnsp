@@ -284,14 +284,12 @@
       tree: null,
       // Positioned boxes of the part of the tree on screen.
       layout: null,
-      // Boxes per wrapped row of children; follows the viewport width.
-      columns: 0,
+      // Most children side by side in one row; follows the viewport width.
+      rowLimit: 0,
       // Asset ids whose children are shown.
       expanded: new Set(),
       // Relationship groups the user folded away.
       collapsedGroups: new Set(),
-      // Pages of children shown per relationship group ("Show more").
-      pageCounts: new Map(),
       selectedId: null,
       elements: new Map(),
       edgeElements: new Map(),
@@ -4132,13 +4130,15 @@
      Asset Relationship tab
 
      Top-down tree: the opened asset is at the top and each level of
-     related assets sits below its parent, laid out horizontally. Built to
-     stay readable with hundreds of children under one asset:
+     related assets branches out below its parent. Built to stay readable
+     with hundreds of children under one asset, with every child shown:
        - a node's children are grouped under one pill per relationship
          type ("Has Installed · 400"), so the label is drawn once;
-       - a large set of siblings wraps into rows under a shared connector
-         instead of one endless row (row width follows the viewport);
-       - big groups are paged ("Show N more" / "Show all");
+       - a small group's children sit side by side in one row;
+       - a big group of leaf assets hangs from its connector as a few
+         vertical branches (each a line with its assets attached), the way
+         an org chart shows many direct reports, instead of one endless
+         row or a grid of rows;
        - deeper levels start collapsed and open from the count badge.
      Plain DOM + SVG only: no third-party library.
   ------------------------------------------------------------------ */
@@ -4160,24 +4160,31 @@
     groupGapX: 48,
     // Asset bottom -> its relationship pill.
     assetToGroup: 34,
-    // Room above each row for its horizontal connector line.
+    // Pill bottom -> children; the connector bar runs half way down.
     busSpace: 36,
-    // Extra space between two wrapped rows.
-    rowGap: 14,
-    // Left margin of a wrapped block, where the shared trunk runs down.
-    trunkPad: 22,
+    // Hanging branches: indent of a box from its branch line, vertical gap
+    // between boxes on a branch, and space between two branches.
+    branchIndent: 28,
+    branchGapY: 16,
+    branchGapX: 52,
     cornerRadius: 8,
     padding: 40
   };
-  /* Columns per row: as many boxes as fit the viewport at DEP_FOCUS_SCALE. */
-  const DEP_MIN_COLUMNS = 4;
-  const DEP_MAX_COLUMNS = 12;
-  const DEP_DEFAULT_COLUMNS = 8;
-  /* A page of children is this many full rows ("Show more" adds a page). */
-  const DEP_PAGE_ROWS = 5;
-  /* First load opens whole levels while the visible tree stays under this
-     many boxes, so a big graph starts compact. */
-  const DEP_INITIAL_VISIBLE_BUDGET = 150;
+  /* Most children laid side by side in one row (or most hanging branches):
+     as many boxes as fit the viewport at DEP_FOCUS_SCALE. */
+  const DEP_MIN_ROW_LIMIT = 4;
+  const DEP_MAX_ROW_LIMIT = 10;
+  const DEP_DEFAULT_ROW_LIMIT = 7;
+  /* A group hangs as branches once it has more than this many rows' worth
+     of children; up to then a (wide) single row still reads best. */
+  const DEP_HANG_AFTER_ROWS = 2;
+  /* Assets per hanging branch to aim for; very big groups get more
+     branches (up to twice a screen's width) rather than endless ones. */
+  const DEP_BRANCH_TARGET_LENGTH = 20;
+  /* First load opens whole levels while the tree stays about this many
+     screens wide, so it starts compact; deeper branches open from their
+     count badge. */
+  const DEP_INITIAL_SCREENS = 4;
   const DEP_MIN_SCALE = 0.05;
   const DEP_MAX_SCALE = 2;
   /* Below this fit scale the labels are unreadable, so the first view
@@ -4556,42 +4563,33 @@
     return nodeId + "\u0001" + groupKey;
   }
 
-  function getDependencyPageSize() {
-    return (state.dependencyGraph.columns || DEP_DEFAULT_COLUMNS) * DEP_PAGE_ROWS;
+  function getDependencyRowLimit() {
+    return state.dependencyGraph.rowLimit || DEP_DEFAULT_ROW_LIMIT;
   }
 
-  function getDependencyGroupLimit(groupId) {
-    return (state.dependencyGraph.pageCounts.get(groupId) || 1) * getDependencyPageSize();
-  }
-
-  /* Opens whole levels, top down, while the number of visible boxes stays
-     within `budget`, so siblings are never half open and half closed.
-     The root is always open. */
+  /* Opens whole levels, top down, so siblings are never half open and half
+     closed, while the tree stays about `budget` boxes wide. A group adds
+     at most one row's worth of width, because a big group hangs as
+     branches instead of spreading out. The root is always open. */
   function expandDependencyLevels(budget) {
     const tree = state.dependencyGraph.tree;
+    const rowLimit = getDependencyRowLimit();
     const expanded = new Set([tree.rootId]);
-    const visibleChildren = (node) => {
-      const ids = [];
-      node.groups.forEach((group) => {
-        group.children
-          .slice(0, getDependencyGroupLimit(getDependencyGroupId(node.id, group.key)))
-          .forEach((id) => ids.push(id));
-      });
-      return ids;
-    };
-    const openCost = (node) => node.groups.length + visibleChildren(node).length;
+    const childIds = (node) => node.groups.reduce((ids, group) => ids.concat(group.children), []);
+    const openWidth = (node) =>
+      node.groups.reduce((sum, group) => sum + Math.min(group.children.length, rowLimit), 0);
     const root = tree.byId.get(tree.rootId);
-    let visible = 1 + openCost(root);
-    let frontier = visibleChildren(root);
+    let width = openWidth(root);
+    let frontier = childIds(root);
     while (frontier.length) {
       const openable = frontier.map((id) => tree.byId.get(id)).filter((node) => node.groups.length);
-      const levelCost = openable.reduce((sum, node) => sum + openCost(node), 0);
-      if (!openable.length || visible + levelCost > budget) break;
-      visible += levelCost;
+      const levelWidth = openable.reduce((sum, node) => sum + openWidth(node), 0);
+      if (!openable.length || width + levelWidth > budget) break;
+      width += levelWidth;
       const next = [];
       openable.forEach((node) => {
         expanded.add(node.id);
-        visibleChildren(node).forEach((childId) => next.push(childId));
+        childIds(node).forEach((childId) => next.push(childId));
       });
       frontier = next;
     }
@@ -4600,8 +4598,8 @@
 
   /* ---------------- Visible tree + layout ---------------- */
 
-  /* The part of the tree currently on screen, as layout items: asset
-     boxes, relationship-group pills and "show more" boxes. */
+  /* The part of the tree currently on screen, as layout items: asset boxes
+     and relationship-group pills. */
   function buildDependencyVisibleTree() {
     const g = state.dependencyGraph;
     const tree = g.tree;
@@ -4635,23 +4633,17 @@
         w: L.groupW,
         h: L.groupH,
         collapsed: g.collapsedGroups.has(groupId),
+        hanging: false,
         children: []
       };
       if (item.collapsed) return item;
-      const limit = getDependencyGroupLimit(groupId);
-      group.children.slice(0, limit).forEach((childId) => item.children.push(assetItem(childId)));
-      const remaining = group.children.length - item.children.length;
-      if (remaining > 0) {
-        item.children.push({
-          kind: "more",
-          key: "m:" + groupId,
-          groupId,
-          remaining,
-          w: L.nodeW,
-          h: L.nodeH,
-          children: []
-        });
-      }
+      group.children.forEach((childId) => item.children.push(assetItem(childId)));
+      // Far more children than fit one row, none of them opened further:
+      // they hang as vertical branches. Once one is opened, the group goes
+      // back to a single row so that child's own branch can spread below it.
+      item.hanging =
+        item.children.length > getDependencyRowLimit() * DEP_HANG_AFTER_ROWS &&
+        item.children.every((child) => !child.children.length);
       return item;
     }
 
@@ -4659,17 +4651,22 @@
   }
 
   /**
-   * Top-down layout, two passes:
-   *  1. measure: every item gets the size of its whole subtree. A group's
-   *     children flow left to right and wrap into a new row once a row
-   *     would exceed `columns` boxes of width (subtrees count by width);
-   *  2. place: boxes are centred over their subtree, rows are stacked
-   *     under the group pill with room for a connector above each row.
+   * Top-down tidy tree, two passes:
+   *  1. measure: every item gets the size of its whole subtree; a group's
+   *     children sit side by side in one row, or, for a hanging group, are
+   *     split over up to `rowLimit` vertical branches of equal length;
+   *  2. place: each box is centred over its subtree and its children are
+   *     placed below it.
    * Linear in the number of items.
    */
-  function layoutDependencyTree(rootItem, columns) {
+  function layoutDependencyTree(rootItem, rowLimit) {
     const L = DEP_LAYOUT;
-    const maxRowW = columns * L.nodeW + (columns - 1) * L.siblingGapX;
+    const branchW = L.branchIndent + L.nodeW;
+    // Branches are a little wider than row boxes; fit the same width.
+    const maxBranches = Math.max(
+      2,
+      Math.round((rowLimit * (L.nodeW + L.siblingGapX)) / (branchW + L.branchGapX))
+    );
 
     function measure(item) {
       if (item.kind === "asset") {
@@ -4685,29 +4682,33 @@
         item.subH = item.h + (item.children.length ? L.assetToGroup + groupsH : 0);
         return;
       }
-      if (item.kind === "more") {
-        item.subW = item.w;
-        item.subH = item.h;
+      item.children.forEach(measure);
+      const count = item.children.length;
+      if (item.hanging) {
+        // A screen's width of branches, more for very big groups so no
+        // branch runs far past DEP_BRANCH_TARGET_LENGTH; then the fewest
+        // boxes per branch for that, so the branches come out even.
+        const wanted = Math.min(
+          maxBranches * 2,
+          Math.max(maxBranches, Math.ceil(count / DEP_BRANCH_TARGET_LENGTH))
+        );
+        item.perBranch = Math.ceil(count / Math.min(wanted, count));
+        item.branches = Math.ceil(count / item.perBranch);
+        item.blockW = item.branches * branchW + (item.branches - 1) * L.branchGapX;
+        const blockH = item.perBranch * L.nodeH + (item.perBranch - 1) * L.branchGapY;
+        item.subW = Math.max(item.w, item.blockW);
+        item.subH = item.h + L.busSpace + blockH;
         return;
       }
-      const rows = [];
-      let row = null;
-      item.children.forEach((child) => {
-        measure(child);
-        if (!row || row.w + L.siblingGapX + child.subW > maxRowW) {
-          row = { items: [], w: 0, h: 0 };
-          rows.push(row);
-        }
-        row.w += (row.items.length ? L.siblingGapX : 0) + child.subW;
-        row.h = Math.max(row.h, child.subH);
-        row.items.push(child);
+      let rowW = 0;
+      let rowH = 0;
+      item.children.forEach((child, index) => {
+        rowW += child.subW + (index ? L.siblingGapX : 0);
+        rowH = Math.max(rowH, child.subH);
       });
-      item.rows = rows;
-      // Wrapped rows get a left margin for the trunk that feeds them.
-      item.trunkPad = rows.length > 1 ? L.trunkPad : 0;
-      item.blockW = rows.reduce((max, r) => Math.max(max, r.w), 0) + item.trunkPad;
-      item.subW = Math.max(item.w, item.blockW);
-      item.subH = rows.reduce((h, r, index) => h + (index ? L.rowGap : 0) + L.busSpace + r.h, item.h);
+      item.rowW = rowW;
+      item.subW = Math.max(item.w, rowW);
+      item.subH = item.h + (count ? L.busSpace + rowH : 0);
     }
 
     const items = [];
@@ -4722,6 +4723,8 @@
       if (item.kind === "asset") assetCount += 1;
       item.x = left + (item.subW - item.w) / 2;
       item.y = top;
+      // Where connectors attach: the centre of the box.
+      item.anchorX = item.x + item.w / 2;
 
       if (item.kind === "asset" && item.children.length) {
         let x = left + (item.subW - item.groupsW) / 2;
@@ -4730,23 +4733,27 @@
           place(child, x, groupTop, item);
           x += child.subW + L.groupGapX;
         });
-      } else if (item.kind === "group" && item.rows.length) {
+      } else if (item.kind === "group" && item.hanging) {
+        // Branch b holds children b*perBranch .. (b+1)*perBranch-1, top to
+        // bottom, so the list reads down each branch, then the next one.
         const blockLeft = left + (item.subW - item.blockW) / 2;
-        item.trunkX = blockLeft + item.trunkPad / 2;
-        let y = top + item.h;
-        item.rows.forEach((row, index) => {
-          y += (index ? L.rowGap : 0) + L.busSpace;
-          row.busY = y - L.busSpace / 2;
-          let x = blockLeft + item.trunkPad;
-          row.items.forEach((child) => {
-            child.rowIndex = index;
-            child.busY = row.busY;
-            place(child, x, y, item);
-            x += child.subW + L.siblingGapX;
-          });
-          y += row.h;
+        const blockTop = top + item.h + L.busSpace;
+        item.busY = top + item.h + L.busSpace / 2;
+        item.children.forEach((child, index) => {
+          const branch = Math.floor(index / item.perBranch);
+          const branchLeft = blockLeft + branch * (branchW + L.branchGapX);
+          const childTop = blockTop + (index % item.perBranch) * (L.nodeH + L.branchGapY);
+          child.branchX = branchLeft + L.branchIndent / 2;
+          place(child, branchLeft + L.branchIndent, childTop, item);
         });
-        item.firstBusY = item.rows[0].busY;
+      } else if (item.kind === "group" && item.children.length) {
+        let x = left + (item.subW - item.rowW) / 2;
+        const rowTop = top + item.h + L.busSpace;
+        item.busY = top + item.h + L.busSpace / 2;
+        item.children.forEach((child) => {
+          place(child, x, rowTop, item);
+          x += child.subW + L.siblingGapX;
+        });
       }
     }
 
@@ -4797,31 +4804,32 @@
     return d + ` L${end.x},${end.y}`;
   }
 
-  /* Connector from a parent item to one child item. Group -> child runs
-     down to the row's connector line; wrapped rows are fed by a trunk on
-     the block's left edge, so lines never cross boxes. */
+  /* Connector from a parent item to one child item: down from the parent,
+     along a horizontal bar half way, then down into the child, so siblings
+     share one bar and read as branches of the same parent. In a hanging
+     group the line runs down the child's branch and turns into its side. */
   function getDependencyEdgePoints(parent, child) {
-    const childX = child.x + child.w / 2;
+    const childX = child.anchorX;
     const childTop = child.y - 1;
-    const startX = parent.x + parent.w / 2;
+    const startX = parent.anchorX;
     const startY = parent.y + parent.h;
-    if (parent.kind === "asset") {
-      const midY = startY + DEP_LAYOUT.assetToGroup / 2;
+    const barY = parent.kind === "asset" ? startY + DEP_LAYOUT.assetToGroup / 2 : parent.busY;
+    if (parent.kind === "group" && parent.hanging) {
+      const childMidY = child.y + child.h / 2;
       return [
         { x: startX, y: startY },
-        { x: startX, y: midY },
-        { x: childX, y: midY },
-        { x: childX, y: childTop }
+        { x: startX, y: barY },
+        { x: child.branchX, y: barY },
+        { x: child.branchX, y: childMidY },
+        { x: child.x - 1, y: childMidY }
       ];
     }
-    const points = [{ x: startX, y: startY }, { x: startX, y: parent.firstBusY }];
-    if (child.rowIndex > 0) {
-      points.push({ x: parent.trunkX, y: parent.firstBusY });
-      points.push({ x: parent.trunkX, y: child.busY });
-    }
-    points.push({ x: childX, y: child.busY });
-    points.push({ x: childX, y: childTop });
-    return points;
+    return [
+      { x: startX, y: startY },
+      { x: startX, y: barY },
+      { x: childX, y: barY },
+      { x: childX, y: childTop }
+    ];
   }
 
   /* ---------------- Rendering ---------------- */
@@ -4911,24 +4919,6 @@
       return el;
     }
 
-    el.className = "dependency-more";
-    const step = Math.min(getDependencyPageSize(), item.remaining);
-    const more = document.createElement("button");
-    more.type = "button";
-    more.className = "dependency-more__btn";
-    more.dataset.depAction = "more";
-    more.dataset.groupId = item.groupId;
-    more.textContent = `Show ${step} more`;
-    el.appendChild(more);
-    if (item.remaining > step) {
-      const all = document.createElement("button");
-      all.type = "button";
-      all.className = "dependency-more__btn dependency-more__btn--all";
-      all.dataset.depAction = "all";
-      all.dataset.groupId = item.groupId;
-      all.textContent = `Show all ${item.remaining}`;
-      el.appendChild(all);
-    }
     return el;
   }
 
@@ -4972,9 +4962,7 @@
       const path = document.createElementNS(DEP_SVG_NS, "path");
       path.setAttribute("d", buildDependencyPolyline(getDependencyEdgePoints(parent, item)));
       let cls = "dependency-edge";
-      if (item.kind === "more") {
-        cls += " is-more";
-      } else if (parent.kind === "group") {
+      if (parent.kind === "group") {
         const group = parent.group;
         if (group.key === DEP_UNLINKED_GROUP_KEY) {
           cls += " is-unlinked";
@@ -5046,7 +5034,7 @@
       if (before) anchorBefore = { x: before.x * g.scale + g.panX, y: before.y * g.scale + g.panY };
     }
 
-    g.layout = g.tree ? layoutDependencyTree(buildDependencyVisibleTree(), g.columns || DEP_DEFAULT_COLUMNS) : null;
+    g.layout = g.tree ? layoutDependencyTree(buildDependencyVisibleTree(), getDependencyRowLimit()) : null;
 
     if (anchorBefore) {
       const after = g.layout.byKey.get(opts.anchorKey);
@@ -5307,14 +5295,15 @@
     return Math.max(DEP_MIN_SCALE, Math.min(DEP_MAX_SCALE, scale));
   }
 
-  /* Boxes per row that fit the viewport at the normal reading zoom. */
-  function getDependencyColumnsForViewport() {
+  /* Most children in one row: as many boxes as fit the viewport side by
+     side at the normal reading zoom. */
+  function getDependencyRowLimitForViewport() {
     const width = getDependencyViewportSize().width;
-    if (!width) return state.dependencyGraph.columns || DEP_DEFAULT_COLUMNS;
+    if (!width) return state.dependencyGraph.rowLimit || DEP_DEFAULT_ROW_LIMIT;
     const L = DEP_LAYOUT;
-    const usable = width / DEP_FOCUS_SCALE - L.padding * 2 - L.trunkPad + L.siblingGapX;
-    const columns = Math.floor(usable / (L.nodeW + L.siblingGapX));
-    return Math.max(DEP_MIN_COLUMNS, Math.min(DEP_MAX_COLUMNS, columns));
+    const usable = width / DEP_FOCUS_SCALE - L.padding * 2 + L.siblingGapX;
+    const size = Math.floor(usable / (L.nodeW + L.siblingGapX));
+    return Math.max(DEP_MIN_ROW_LIMIT, Math.min(DEP_MAX_ROW_LIMIT, size));
   }
 
   function updateDependencyZoomTransform() {
@@ -5398,10 +5387,15 @@
       fitDependencyGraphToView();
       return;
     }
+    // Too tall to fit readably: start at the top, and show the full width
+    // when it fits at a readable zoom, else centre on the root.
     const root = g.layout.byKey.get("a:" + g.tree.rootId);
-    const scale = DEP_FOCUS_SCALE;
+    const scale = Math.max(DEP_READABLE_SCALE, Math.min(DEP_FOCUS_SCALE, size.width / g.layout.width));
     g.scale = scale;
-    g.panX = size.width / 2 - (root.x + root.w / 2) * scale;
+    g.panX =
+      g.layout.width * scale <= size.width
+        ? (size.width - g.layout.width * scale) / 2
+        : size.width / 2 - (root.x + root.w / 2) * scale;
     g.panY = 20 - root.y * scale;
     updateDependencyZoomTransform();
   }
@@ -5432,15 +5426,6 @@
       if (g.collapsedGroups.has(groupId)) g.collapsedGroups.delete(groupId);
       else g.collapsedGroups.add(groupId);
       renderDependencyView({ anchorKey: "g:" + groupId, refocus: { key: "g:" + groupId, action } });
-      return;
-    }
-
-    if (action === "more" || action === "all") {
-      const groupId = button.dataset.groupId;
-      const pages = g.pageCounts.get(groupId) || 1;
-      g.pageCounts.set(groupId, action === "all" ? Infinity : pages + 1);
-      // The group pill stays put; new rows appear below the existing ones.
-      renderDependencyView({ anchorKey: "g:" + groupId, refocus: { key: "m:" + groupId, action: "more" } });
     }
   }
 
@@ -5561,17 +5546,17 @@
   }
 
   /* The viewport has no size while its tab is hidden: the first view is
-     applied once it gets one. A width change re-wraps the rows, and the
-     view is re-fitted until the user has panned or zoomed themselves. */
+     applied once it gets one. A width change re-fits rows and branches to
+     it, and the view is re-fitted until the user has panned or zoomed. */
   function onDependencyViewportResize() {
     const g = state.dependencyGraph;
     const size = getDependencyViewportSize();
     if (!size.width || !size.height) return;
-    const columns = getDependencyColumnsForViewport();
-    const columnsChanged = columns !== g.columns;
-    g.columns = columns;
+    const rowLimit = getDependencyRowLimitForViewport();
+    const rowLimitChanged = rowLimit !== g.rowLimit;
+    g.rowLimit = rowLimit;
     if (!g.tree) return;
-    if (columnsChanged) renderDependencyView({ anchorKey: "a:" + g.tree.rootId });
+    if (rowLimitChanged) renderDependencyView({ anchorKey: "a:" + g.tree.rootId });
     if (g.pendingInitialView || !g.userMoved) applyDependencyInitialView();
   }
 
@@ -5622,7 +5607,7 @@
     const tree = buildDependencyTree(model, state.dependencyRowsRaw);
     g.model = model || null;
     g.tree = tree;
-    g.columns = getDependencyColumnsForViewport();
+    g.rowLimit = getDependencyRowLimitForViewport();
     if (ui.dependencyEmptyState) ui.dependencyEmptyState.hidden = Boolean(tree);
 
     if (!tree) {
@@ -5641,9 +5626,8 @@
       if (g.selectedId != null && !tree.byId.has(g.selectedId)) g.selectedId = null;
     } else {
       g.collapsedGroups = new Set();
-      g.pageCounts = new Map();
       g.selectedId = null;
-      g.expanded = expandDependencyLevels(DEP_INITIAL_VISIBLE_BUDGET);
+      g.expanded = expandDependencyLevels(getDependencyRowLimit() * DEP_INITIAL_SCREENS);
     }
 
     renderDependencyView();

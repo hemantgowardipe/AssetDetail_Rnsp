@@ -10,13 +10,10 @@
       visibility: hidden;
     }
   </style>
-  <link
-    rel="stylesheet"
-    href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/4.7.0/css/font-awesome.min.css"
-    crossorigin="anonymous"
-  />
-  <link rel="stylesheet" href="https://appai.quickappflow.com/Attachment/downloadfile?fileUrl=Pages1%2Fglobal_0186e160-6e3d-4277-8918-55b2fa011c88.css" />
-  <link rel="stylesheet" href="https://appai.quickappflow.com/Attachment/downloadfile?fileUrl=Pages1%2Fasset-serial-details_aaceee5d-b439-4ecb-9ae9-37ad9eb905ef.css" />
+  <link rel="stylesheet" href="https://appai.quickappflow.com/Attachment/downloadfile?fileUrl=Pages1%2Fglobal_26d6b9e3-527a-4495-bcb8-b1377b95b8bb.css" />
+  <!-- Shared tab strip (.settings-tab*), the same file the Setting page uses. Must come after global.css and before asset-serial-details.css. -->
+  <link rel="stylesheet" href="https://appai.quickappflow.com/Attachment/downloadfile?fileUrl=Pages1%2Ftab_styling_3a474bce-342a-4132-b1f9-11e71d5f0481.css" />
+  <link rel="stylesheet" href="https://appai.quickappflow.com/Attachment/downloadfile?fileUrl=Pages1%2Fasset-serial-details_1f87a729-1711-4c5d-aa9a-c4c19a2b8310.css" />
 </head>
 <body>
   <div id="assetSerialDetailsAppHost">
@@ -36,17 +33,19 @@
     <main class="asset-serial-page qaf-navdock-layout-shift">
       <header class="asset-serial-header">
         <div class="back-btn" aria-label="Back to asset list">
-          <a id="backToAssetDetails" class="back-btn__text" href="#">
-            <i class="fa fa-arrow-left" aria-hidden="true" style="margin-right: 8px"></i>
-            Back
+          <a id="backToAssetDetails" class="back-btn__text mat-button" href="#">
+            <span class="mat-button-wrapper">&lt; Back</span>
           </a>
         </div>
-        <nav class="asset-tabs" aria-label="Asset details tabs">
-          <button type="button" class="asset-tab is-active" data-tab-target="summaryPanel" aria-selected="true">Summary</button>
-          <button type="button" class="asset-tab" data-tab-target="otherDetailPanel" aria-selected="false">Other Details</button>
-          <button type="button" class="asset-tab" data-tab-target="historyPanel" aria-selected="false">Audit Log</button>
-          <button type="button" class="asset-tab" data-tab-target="dependencyPanel" aria-selected="false">Asset Relationship</button>
-        </nav>
+        <!-- Shared tab strip (tab_styling.css), as on the Setting page. -->
+        <div class="settings-tabs-header">
+          <nav class="settings-tabs" role="tablist" aria-label="Asset details tabs">
+            <button type="button" class="settings-tab is-active" role="tab" data-tab-target="summaryPanel" aria-selected="true">Summary</button>
+            <button type="button" class="settings-tab" role="tab" data-tab-target="otherDetailPanel" aria-selected="false">Other Details</button>
+            <button type="button" class="settings-tab" role="tab" data-tab-target="historyPanel" aria-selected="false">Audit Log</button>
+            <button type="button" class="settings-tab" role="tab" data-tab-target="dependencyPanel" aria-selected="false">Asset Relationship</button>
+          </nav>
+        </div>
       </header>
 
       <div id="summaryTabRegion" class="summary-tab-region">
@@ -72,7 +71,7 @@
               </div>
             </div>
 
-            <div id="summarySections" class="summary-sections"></div>
+            <div id="summarySections" class="summary-sections"><div class="qaf-loader" role="status" aria-label="Loading"><span class="qaf-loader__dot" aria-hidden="true"></span><span class="qaf-loader__dot" aria-hidden="true"></span><span class="qaf-loader__dot" aria-hidden="true"></span></div></div>
           </div>
         </section>
 
@@ -80,7 +79,7 @@
           <section id="allocationSection" class="allocation-section" aria-labelledby="allocationHeading">
             <h2 id="allocationHeading" class="allocation-heading">Asset Allocation</h2>
             <div class="allocation-table-wrap qaf-scrollbar-thin">
-              <table id="allocationTable" class="allocation-table" data-resize-key="assetSerialAllocationTable" aria-label="Asset allocation details">
+              <table id="allocationTable" class="allocation-table" aria-label="Asset allocation details">
                 <thead>
                   <tr id="allocationTableHeadRow">
                     <th class="row-actions-head no-sort no-resize" aria-label="Actions"></th>
@@ -96,7 +95,7 @@
                 </thead>
                 <tbody id="allocationTableBody">
                   <tr>
-                    <td colspan="9" class="allocation-empty">No Record Found</td>
+                    <td colspan="9" class="allocation-empty asd-table-message"><div class="asd-table-message__text"><div class="qaf-loader" role="status" aria-label="Loading"><span class="qaf-loader__dot" aria-hidden="true"></span><span class="qaf-loader__dot" aria-hidden="true"></span><span class="qaf-loader__dot" aria-hidden="true"></span></div></div></td>
                   </tr>
                 </tbody>
               </table>
@@ -108,13 +107,24 @@
           <section id="ticketsSection" class="tickets-section" aria-labelledby="ticketsHeading">
             <h2 id="ticketsHeading" class="tickets-heading">Tickets</h2>
             <div class="tickets-table-wrap qaf-scrollbar-thin">
-              <table id="ticketsTable" class="tickets-table" data-resize-key="assetSerialTicketsTable" aria-label="Asset tickets">
+              <table id="ticketsTable" class="tickets-table" aria-label="Asset tickets">
                 <thead>
-                  <tr id="ticketsTableHeadRow"></tr>
+                  <tr id="ticketsTableHeadRow">
+                    <th>Ticket ID</th>
+                    <th>Request Title</th>
+                    <th>Requester</th>
+                    <th>Priority</th>
+                    <th>Due Date</th>
+                    <th>Assigned To</th>
+                    <th>Created Date</th>
+                    <th>Opened By</th>
+                    <th>Status</th>
+                    <th>Assigned To Team</th>
+                  </tr>
                 </thead>
                 <tbody id="ticketsTableBody">
                   <tr>
-                    <td colspan="1" class="tickets-empty">Loading...</td>
+                    <td colspan="10" class="tickets-empty asd-table-message"><div class="asd-table-message__text"><div class="qaf-loader" role="status" aria-label="Loading"><span class="qaf-loader__dot" aria-hidden="true"></span><span class="qaf-loader__dot" aria-hidden="true"></span><span class="qaf-loader__dot" aria-hidden="true"></span></div></div></td>
                   </tr>
                 </tbody>
               </table>
@@ -135,8 +145,8 @@
         <div id="historyPanel" class="tab-panel" role="tabpanel" hidden>
           <section id="historyLogSection" class="history-log-section" aria-labelledby="assetLogHeading">
             <h2 id="assetLogHeading" class="history-log-heading">Asset Log</h2>
-            <div class="history-log-table-wrap qaf-scrollbar-thin">
-              <table id="historyLogTable" class="history-log-table" data-resize-key="assetSerialHistoryLogTable" aria-label="Asset history log">
+            <div class="history-log-table-wrap qaf-scrollbar-10">
+              <table id="historyLogTable" class="history-log-table" aria-label="Asset history log">
                 <thead>
                   <tr id="historyLogTableHeadRow">
                     <th>Asset</th>
@@ -148,7 +158,7 @@
                 </thead>
                 <tbody id="historyLogTableBody">
                   <tr>
-                    <td colspan="5" class="history-log-empty">No Record Found</td>
+                    <td colspan="5" class="history-log-empty asd-table-message"><div class="asd-table-message__text">No Record Found</div></td>
                   </tr>
                 </tbody>
               </table>
@@ -159,7 +169,7 @@
 
       <section id="dependencyCard" class="asset-card asset-tab-card" hidden>
         <div id="dependencyPanel" class="tab-panel" role="tabpanel" hidden>
-          <section id="dependencySection" class="dependency-section" aria-label="Asset Dependency">
+          <section id="dependencySection" class="dependency-section" aria-label="Asset Relationship">
             <div class="dependency-section-head">
               <button
                 type="button"
@@ -180,17 +190,26 @@
 
             <div id="dependencyViewport" class="dependency-viewport">
               <div id="dependencyWorld" class="dependency-world">
-                <svg id="dependencyEdges" class="dependency-edges" viewBox="0 0 2400 1400">
+                <svg id="dependencyEdges" class="dependency-edges" width="0" height="0" aria-hidden="true">
                   <defs>
-                    <marker id="dependencyArrow" markerWidth="9" markerHeight="9" refX="7" refY="3.5" orient="auto" markerUnits="userSpaceOnUse">
-                      <path d="M0,0 L7,3.5 L0,7 Z" fill="#aeb8c7"></path>
+                    <marker id="dependencyArrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto" markerUnits="userSpaceOnUse">
+                      <path d="M0,0 L10,5 L0,10 Z" fill="#9aa4b2"></path>
+                    </marker>
+                    <marker id="dependencyArrowStart" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse" markerUnits="userSpaceOnUse">
+                      <path d="M0,0 L10,5 L0,10 Z" fill="#9aa4b2"></path>
+                    </marker>
+                    <marker id="dependencyArrowActive" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto" markerUnits="userSpaceOnUse">
+                      <path d="M0,0 L10,5 L0,10 Z" fill="#6338e5"></path>
+                    </marker>
+                    <marker id="dependencyArrowStartActive" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse" markerUnits="userSpaceOnUse">
+                      <path d="M0,0 L10,5 L0,10 Z" fill="#6338e5"></path>
                     </marker>
                   </defs>
                 </svg>
-                <!-- Dependency nodes are rendered dynamically from the API response -->
+                <!-- Relationship nodes are rendered dynamically from the API response -->
               </div>
               <div class="dependency-empty" id="dependencyEmptyState" hidden>No Record Found</div>
-              <div class="dependency-loading" id="dependencyLoadingState" hidden>Loading...</div>
+              <div class="dependency-loading" id="dependencyLoadingState" hidden><div class="qaf-loader" role="status" aria-label="Loading"><span class="qaf-loader__dot" aria-hidden="true"></span><span class="qaf-loader__dot" aria-hidden="true"></span><span class="qaf-loader__dot" aria-hidden="true"></span></div></div>
             </div>
           </section>
         </div>
@@ -299,9 +318,9 @@
     </div>
   </div>
 
-  <script src="https://appai.quickappflow.com/Attachment/downloadfile?fileUrl=Pages1%2Fbundle_3d72dd60-52af-455a-ba4f-5cc7bd4b2be4.js"></script>
-  <script src="https://appai.quickappflow.com/Attachment/downloadfile?fileUrl=Pages1%2Flibrary_58d79208-4260-4ec4-b157-ebd1f81bc6b5.js"></script>
-  <script src="https://appai.quickappflow.com/Attachment/downloadfile?fileUrl=Pages1%2FAsset_nav_dock_46b49aa9-72cf-4b04-a3f4-392112cf6e9c.js"></script>
-  <script src="https://appai.quickappflow.com/Attachment/downloadfile?fileUrl=Pages1%2Fasset-serial-details_b0371156-3da7-49db-8fb7-f2c2d5bd410f.js" defer></script>
+    <script src="https://appai.quickappflow.com/Attachment/downloadfile?fileUrl=Pages1%2FAsset_nav_dock_11e6c2be-f460-433d-8f6d-2fada388d828.js"></script>
+    <script src="https://appai.quickappflow.com/Attachment/downloadfile?fileUrl=Pages1%2Fbundle_5fe5a71d-d401-4b6e-901e-9f25bb586231.js"></script>
+    <script src="https://appai.quickappflow.com/Attachment/downloadfile?fileUrl=Pages1%2Flibrary_b6ec9d53-58dc-4c43-8af1-082bc85c8c0f.js"></script>
+    <script src="https://appai.quickappflow.com/Attachment/downloadfile?fileUrl=Pages1%2Fasset-serial-details_9bbd277d-b87f-4626-9607-6b01e9df131a.js"></script>
 </body>
 </html>

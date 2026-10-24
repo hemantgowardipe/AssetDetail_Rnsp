@@ -1319,8 +1319,7 @@ body.history-comment-modal-open {
   stroke: #a9cbe3;
 }
 
-.dependency-edge.is-unlinked,
-.dependency-edge.is-more {
+.dependency-edge.is-unlinked {
   stroke-dasharray: 4 4;
 }
 
@@ -1332,8 +1331,7 @@ body.history-comment-modal-open {
 /* ---- Asset box ---- */
 
 .dependency-node,
-.dependency-group,
-.dependency-more {
+.dependency-group {
   position: absolute;
   box-sizing: border-box;
 }
@@ -1510,42 +1508,6 @@ body.history-comment-modal-open {
 
 .dependency-group.is-collapsed .dependency-group__btn {
   border-style: dashed;
-}
-
-/* ---- "Show N more" box at the end of a paged group ---- */
-
-.dependency-more {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 2px;
-  border: 1px dashed #b8bfcb;
-  border-radius: 10px;
-  background: #fff;
-}
-
-.dependency-more__btn {
-  height: 20px;
-  padding: 0 10px;
-  border: 0;
-  border-radius: 10px;
-  background: transparent;
-  font: inherit;
-  font-size: 11px;
-  font-weight: 600;
-  color: #4c26c9;
-  white-space: nowrap;
-  cursor: pointer;
-}
-
-.dependency-more__btn:hover {
-  background: #f3f0ff;
-}
-
-.dependency-more__btn--all {
-  font-weight: 500;
-  color: #6b7280;
 }
 
 .dependency-section button:focus-visible {
